@@ -28,6 +28,10 @@ ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input s
 void setup() {
    Serial.begin(9600);
 
+   /* reset the 82C55 */
+   pinMode(A8,OUTPUT);
+   digitalWrite(A8,HIGH);
+
    /* Port A, bidirectional port of the 82C55 */
    pinMode(22,INPUT);   // set to input for starters
    pinMode(23,INPUT);
@@ -45,8 +49,8 @@ void setup() {
    pinMode(13,INPUT);
 
    /* Port C, the 82C55 handshake lines */
-   digitalWrite(5,HIGH);   // C0 - not ready yet
-   pinMode(5,OUTPUT);     // interface enable bit
+   digitalWrite(5,HIGH);   // C0, interface enable bit
+   pinMode(5,OUTPUT);      // not ready yet
    pinMode(30,INPUT);     // OBFA, low when data is available on A port
    digitalWrite(31,HIGH); 
    pinMode(31,OUTPUT);    // ACKA, Low to ACK data and read it on the A port
@@ -55,13 +59,15 @@ void setup() {
    pinMode(33,OUTPUT);    // STBA, Write low to latch output data
    // C3 intra unused, C1,C2 are wired to ground via resistor
 
+   digitalWrite(A8,LOW);  // release reset pin on 82C55
+   digitalWrite(5,LOW);   // ready, Tandy reads 000 on the C2,C1,C0 bits to detect
+                          // the presence of the DVI on the expansion bus
+   
    if (!sd.begin(chipSelect, SD_SCK_MHZ(8))) {
       sd.initErrorHalt();
    }
 
    sd.chdir("M200ROOT");
-   digitalWrite(5,LOW);   // ready, Tandy reads 000 on the C0,C1,C2 bits
-   // !!! maybe should wire reset on this side and release it here
 
 }
 
@@ -151,24 +157,24 @@ unsigned long file_offset;
 int stat,x;
 unsigned char c;
 
-   // set default directory  here or address root with /M200ROOT/ ?
+   // !!! set default directory here or address root with /M200ROOT/ ?
    if(file.open("DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
    // or open DSK1.IMG for disk 1
 
-   // 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39, sectors numbered 1 to 18
-   // sectors are 256 bytes long
+   // Simulating a 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39,
+   // sectors numbered 1 to 18,  sectors are 256 bytes long, a cluster is 9 sectors.
    file_offset = 256UL * 18UL * (unsigned long)track;
    file_offset += 256UL * (unsigned long)(sector-1);
    if( file.seekSet(file_offset) == 0 ) error("Seek failed");
 
-   /*  read the number of sectors requested, send status after each 256 bytes */
+   /*  read the number of sectors requested, send status before each 256 bytes */
    while( count-- ){
+      write_Aport(0);      // !!! error status sent here, just faking it for now
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
           //if( stat == -1 ) error("End of file\n");
           write_Aport(c);
-      }
-      write_Aport(0);   // !!! eventually this will be errors like eof, file not found, etc 
+      } 
    }
 
    file.close();  // !!! should file be a local object instead of global?
