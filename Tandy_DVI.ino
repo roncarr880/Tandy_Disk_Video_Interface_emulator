@@ -44,7 +44,7 @@ void setup() {
    pinMode(12,INPUT);
    pinMode(13,INPUT);
 
-   /* Port C, the handshake lines */
+   /* Port C, the 82C55 handshake lines */
    digitalWrite(5,HIGH);   // C0 - not ready yet
    pinMode(5,OUTPUT);     // interface enable bit
    pinMode(30,INPUT);     // OBFA, low when data is available on A port
@@ -68,18 +68,18 @@ void setup() {
 void loop() {
 unsigned char command;
 
-  if( digitalRead(OBFA) == 0 ){      // something was sent to the A port
+  if( digitalRead(OBFA) == LOW ){      // something was sent to the A port
     command = PINB >> 4;             // B port will tell us what to do with it
     switch(command){                 // command dispatch
        case 0:   break;              // CRT data write
-       case 1:   break;              // CRT data read
+       case 1:   break;              // CRT data read ? or do we need to check B port directly for this one
        case 2:   disk_data();       break;  // should be a file open for write ?
        case 3:   disk_command();    break;
        case 0xc: ctrl_break();      break;
        default:  unknown_dispatch(command); break;    // close all and abort ? 
     }      
   }
-  delay(1);
+  else delay(1);
 }
 
 void ctrl_break(){   // control break was pressed ?
@@ -127,6 +127,7 @@ unsigned char read_Aport(){
 unsigned char c;
 
   while( digitalRead(OBFA) );   // wait for data !!! need to time this out
+                                // maybe look for ctrl_break on the B port
   digitalWrite(ACKA,LOW);
   c = PINA;
   digitalWrite(ACKA,HIGH);
@@ -137,10 +138,11 @@ unsigned char c;
 void write_Aport( unsigned char c ){
 
   while( digitalRead(IBFA) );    // wait for Tandy M200 to read the old data  !!! will want to time this out
+                                 // maybe look for ctrl_break on the B port.
   PORTA = c;
-  DDRA = 0xff;   // outputs
-  digitalWrite(STBA,LOW);
-  digitalWrite(STBA,HIGH);
+  DDRA = 0xff;   // outputs      // consider pullups and writing DDRA = c ^ 0xff
+  digitalWrite(STBA,LOW);        // with PORTA always = 0 in setup
+  digitalWrite(STBA,HIGH);       // only saves 1 statement and not much room on the proto board for resistors.
   DDRA = 0x00;   // inputs
 }
 
@@ -151,6 +153,7 @@ unsigned char c;
 
    // set default directory  here or address root with /M200ROOT/ ?
    if(file.open("DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
+   // or open DSK1.IMG for disk 1
 
    // 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39, sectors numbered 1 to 18
    // sectors are 256 bytes long
@@ -166,6 +169,9 @@ unsigned char c;
           write_Aport(c);
       }
       write_Aport(0);   // !!! eventually this will be errors like eof, file not found, etc 
-   } 
+   }
+
+   file.close();  // !!! should file be a local object instead of global?
+      
 }
 
