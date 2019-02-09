@@ -9,7 +9,10 @@
  *     nibble,  and the handshake lines on the C port of the 82C55 are wired to the corresponding
  *     bits on the C port of the Mega.
  *   
- *   1st test, just want the Tandy M200 to boot the disk img
+ *   From reading club100, the way to unload the DVI code from the M200 is to 
+ *      poke 61110,201 : poke 61122,201 : call 39703 : clear 100, maxram
+ *   But this seems to disable any attempt to reload it.  A call to IOINIT is used to enable it again.
+ *   call 33820 while in the bank in question.  
  */
 
 #define OBFA 30     // port C handshake names
@@ -49,7 +52,7 @@ ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input s
 #define error(msg) sd.errorHalt(F(msg))  // Error messages stored in flash.
 
 void setup() {
-   Serial.begin(9600);
+   Serial.begin(38400);
 
    /* reset the 82C55 */
    pinMode(A8,OUTPUT);
@@ -92,7 +95,7 @@ void setup() {
    }
 
    sd.chdir("M200ROOT");
-
+   Serial.println(F("Starting.."));
 }
 
 void loop() {
@@ -101,10 +104,11 @@ unsigned char function;
   if( digitalRead(OBFA) == LOW ){      // something was sent to the A port
     function = PINB >> 4;             // B port will tell us what to do with it
     switch(function){                 // command dispatch
-       case 0:   crt_write();  break;
-       case 1:   crt_read();   break;
+       case 0:   crt_write();       break;
+       case 1:   crt_read();        break;
        case 2:   disk_data();       break;
        case 3:   disk_command();    break;
+       case 4:   function4();       break;
        case 0xc: ctrl_break();      break;
        default:  unknown_dispatch(function); break; 
     }      
@@ -112,6 +116,12 @@ unsigned char function;
 
 }
 
+void function4(){   // what does function 4 do, reset all? or attention?
+unsigned char c;    // seems to be sent on ram bank change and on boot
+
+    c = read_Aport();
+    Serial.print(F("Function4 "));  Serial.println(c);
+}
 void ctrl_break(){   // control break was pressed ?
 
     read_Aport();   // discard
@@ -132,39 +142,38 @@ void crt_write(){   // pass characters to a terminal program
 unsigned char c;
 
    c = read_Aport();
-   Serial.write(c);
+  // if( isalnum(c) ) Serial.write(c); // or bit bucket, the control characters mess up the diag
+                                     // messages
 }
 
 void disk_command(){
-unsigned char count;
-unsigned char disk;
-unsigned char track;
-unsigned char sector;
 unsigned char command;
 
-   command = read_Aport();   //!!!  will all need to be changed when we have more commands ?
-                             // !!! need to do this 1st read here
-   count = read_Aport();     // !!!  and maybe move all this down to disk image read when we learn
-   disk = read_Aport();      // !!!  what the other commands look like
-   track = read_Aport();     // !!!  are the commands always 5 bytes long?
-   sector = read_Aport();
+   command = read_Aport(); 
 
-   Serial.print(F("Disk Command ")); Serial.print(command,HEX);
-   Serial.print(F(" Count "));  Serial.print(count,HEX);
-   Serial.print(F(" Disk "));   Serial.print(disk,HEX);
-   Serial.print(F(" Track "));  Serial.print(track,HEX);
-   Serial.print(F(" Sector ")); Serial.println(sector,HEX);
+   Serial.print(F("Disk Command ")); Serial.print(command);
 
-   if( command == 2 ) disk_img_read(count,disk,track,sector);  // only command we know of at this point
-   
+   switch(command){
+       case 0:              // not sure what this command is, recal?
+         delay(3);          // delay probably not needed
+         // mk_floppy_img();  // maybe
+         write_Aport(128);  // this response seems to work after a cold boot
+       break;
+       case 1:                    break;
+       case 2:  disk_img_read();  break;
+   }
+
+   Serial.println();
+
 }
+
 
 void unknown_dispatch(unsigned char function){
 unsigned char c;
   
-  Serial.print(F("Unknown Dispatch Function ")); Serial.print(function,HEX);
+  Serial.print(F("Unknown Dispatch Function ")); Serial.print(function );
   c = read_Aport();
-  Serial.print(F(" Port A "));  Serial.print(c,HEX); Serial.write(' ');
+  Serial.print(F(" Port A "));  Serial.print(c ); Serial.write(' ');
   if( isalnum(c)) Serial.write(c);
   Serial.println();
 }
@@ -172,10 +181,8 @@ unsigned char c;
 unsigned char read_Aport(){
 unsigned char c;
 
-  while( digitalRead(OBFA) ){      // wait for data 
-     if( PINB & 0xc0 ) break;      // look for ctrl_break on the B port
-                                   // have a suspicion that 0x4 is sent and not 0xc as stated in manual
-                                   // maybe there are two commands
+  while( digitalRead(OBFA) ){                // wait for data 
+     if( (PINB >> 4) == 4 ) break;      // look for reset on the b port
   }
   digitalWrite(ACKA,LOW);
   c = PINA;
@@ -186,8 +193,8 @@ unsigned char c;
 
 void write_Aport( unsigned char c ){
 
-  while( digitalRead(IBFA) ){    // wait for Tandy M200 to read the old data
-     if( PINB & 0xc0 ) break;    // look for ctrl_break on the B port.
+  while( digitalRead(IBFA) ){              // wait for Tandy M200 to read the old data
+     if( (PINB >> 4) == 4 ) return;  // break;  // look for reset on the B port.
   }
   PORTA = c;
   DDRA = 0xff;                // outputs 
@@ -196,10 +203,21 @@ void write_Aport( unsigned char c ){
   DDRA = 0x00;                // leave the A port defaulted to inputs
 }
 
-void disk_img_read( unsigned char count, unsigned char disk, unsigned char track,unsigned char sector){
+void disk_img_read(){
 unsigned long file_offset;
 int stat,x;
-unsigned char c;
+unsigned char c, count, disk, track, sector;
+
+   count = read_Aport();
+   disk = read_Aport();
+   track = read_Aport();
+   sector = read_Aport();
+
+   Serial.print(F(" Count "));  Serial.print(count);
+   Serial.print(F(" Disk "));   Serial.print(disk);
+   Serial.print(F(" Track "));  Serial.print(track);
+   Serial.print(F(" Sector ")); Serial.print(sector);
+
 
    // !!! set default directory here or address root with /M200ROOT/ ?
    if(file.open("DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
