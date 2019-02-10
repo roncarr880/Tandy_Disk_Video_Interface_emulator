@@ -13,6 +13,9 @@
  *      poke 61110,201 : poke 61122,201 : call 39703 : clear 100, maxram
  *   But this seems to disable any attempt to reload it.  A call to IOINIT is used to enable it again.
  *   call 33820 while in the bank in question.  
+ *   
+ *   Have decided to keep a fake FAT and fake Directory for the 180k simulated drive.  The files will
+ *   be stored on the SD card as files instead of inserting them in the disk image.
  */
 
 #define OBFA 30     // port C handshake names
@@ -37,6 +40,11 @@
 #define DF 63     // Disk Full
 
 #define EOF 26
+#define DIR_SIZE  768    // 3 sectors can hold 48 files at 16 bytes per entry
+                         // max possible for 180k drive is 80 files which is the number of clusters
+                         // but we only have 8k of ram to play with on the Arduino Mega so keeping
+                         // this small.  Directory sectors are 1 to 15 which is more entries than 
+                         // the FAT can support
 
 #include <SPI.h>
 #include "SdFat.h"
@@ -55,9 +63,10 @@ ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input s
 
 // Faking the image FAT and DIRECTORY, track 20.  Storing files as files and not in the image.
 // only tracks 0,1,2 and parts of 20 will come from the image. T20 S15 seems special and all zero's.
-unsigned char my_dir[768];  // 3 sectors, 48 files, others will be from the image, max 80 filenames/clusters
-unsigned char my_fat[80];    // one copy enough? fpr sectors 16,17,18.  80 clusters.
-
+unsigned char my_dir[DIR_SIZE];  // 3 sectors, 48 files
+unsigned char my_fat[80];    // one copy enough? for sectors 16,17,18.  80 clusters.
+                             // double subscript these for drive 1 if end up with enough ram
+                             
 void setup() {
    Serial.begin(38400);
 
@@ -119,7 +128,7 @@ unsigned char function;
        case 2:   disk_data();       break;
        case 3:   disk_command();    break;
        case 4:   function4();       break;
-       case 0xc: ctrl_break();      break;
+      // case 0xc: ctrl_break();      break;  this doesn't seem to happen
        default:  unknown_dispatch(function); break; 
     }      
   }
@@ -132,10 +141,11 @@ unsigned char c;    // seems to be sent on ram bank change and on boot
     c = read_Aport();
     Serial.print(F("Function4 "));  Serial.println(c);
 }
-void ctrl_break(){   // control break was pressed ?
 
-    read_Aport();   // discard
-}
+//void ctrl_break(){   // control break was pressed ?
+//
+//    read_Aport();   // discard
+//}
 
 void disk_data(){
   
@@ -152,8 +162,9 @@ void crt_write(){   // pass characters to a terminal program
 unsigned char c;
 
    c = read_Aport();
-  // if( isalnum(c) ) Serial.write(c); // or bit bucket, the control characters mess up the diag
-                                     // messages
+   // every character sent has control characters probably for positioning
+   // put them in the bit bucket for now as they mess up the diagnostic messages
+  // Serial.write(c); 
 }
 
 void disk_command(){
@@ -382,7 +393,7 @@ int found;
     
     // need to follow all the cluster chains until we find the one we want
     found = 0;
-    for( i = 0; i < 48; i += 16 ){
+    for( i = 0; i < DIR_SIZE; i += 16 ){
         *off = 0;
         chain = my_dir[i + 10];     // the head cluster number in the directory entry
         
@@ -397,7 +408,7 @@ int found;
                 
         if(found) break;  
     }
-    if( i < 48 ) return i;
+    if( i < DIR_SIZE ) return i;
     else return -1;
 }
 
