@@ -169,7 +169,7 @@ unsigned char command;
          // mk_floppy_img();  // maybe
          write_Aport(128);  // this response seems to work after a cold boot
        break;
-       case 1:                    break;
+       case 1:                    break;  // this will be a write to disk
        case 2:  disk_img_read();  break;
    }
 
@@ -298,32 +298,35 @@ int x;
 }
 
 void read_file(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
-int i;
-int x;
+int x,i,j;
 char filename[15];
-int j;
-int head;
-unsigned char t,c;
+// int head;
+// unsigned char t
+unsigned char c;
 unsigned long offset;
 int stat;
 
 
-   i = find_dir_entry( disk,track,sector );
-   if( i == -1 ){
-       while( count-- ){
-          write_Aport(0);
-          for( x = 0; x < 256; ++x ) write_Aport(0xff);   // unused disk area was requested
+   // do a reverse lookup of the directory entry using the cluster number
+   offset = 0;
+   i = find_dir_entry( disk, track, sector, &offset );
+   
+   if( i == -1 ){                      // unused disk area was requested
+       while( count-- ){               // send all 0xff's, ignore if count more than 1
+          write_Aport(0);              // actually moves into a used area
+          for( x = 0; x < 256; ++x ) write_Aport(0xff);   
        }
        return;
    }
 
-   // make a proper filename from 6 by 3
+   // make a proper filename from 6 by 3, filenames are stored with space padding and 3 character
+   // extension by its position in the 9 character field
    j = 0;
-   for( x = 0; x < 6; ++x ){
+   for( x = 0; x < 6; ++x ){     // pick up the filename ignoring spaces
       if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
       ++i;       
    }
-   filename[j++] = '.';
+   filename[j++] = '.';          // get the extension ignoring spaces
    for( x = 0; x < 3; ++x ){
       if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
       ++i;
@@ -332,23 +335,26 @@ int stat;
    if( filename[j-1] == '.' ) filename[j-1] = 0;
    filename[j] = 0;
    
-   ++i;
-   head = my_dir[i];
+ //  ++i;
+ //  head = my_dir[i];
 
+//!!! think add 256UL * (sector-1)%9; to the offset  mod 9, 0 to 8 and 9 to 17
    // this will fail if clusters are not together, there should be an easier way to do this
    // calc the file offset needed
-Serial.write(' '); Serial.print(head); Serial.write(' ');   
-   t = head/2;
-Serial.print(t);
-   offset = 256UL * 18UL * (unsigned long)(track - t);
-   offset += 256UL * (sector-1);
-   if( 2*t != head ) offset -= 256UL * 9;   //2nd cluster in the track
+//Serial.write(' '); Serial.print(head); Serial.write(' ');   
+//   t = head/2;
+//Serial.print(t);
+//   offset = 256UL * 18UL * (unsigned long)(track - t);
+//   if( 2*t != head ) offset -= 256UL * 9UL;   //2nd cluster in the track
 
-Serial.write(' '); Serial.print(offset);
+   offset += 256UL * (unsigned long)((sector-1) % 9);
+
+   Serial.write(' '); Serial.print(filename);
+   Serial.write(' '); Serial.print(offset);
    
    // well I don't know if we are there but let it go
-      if(file.open(filename,O_RDONLY) == 0 ) error("File open failed");
-      if( file.seekSet(offset) == 0 ) error("\nSeek failed");
+   if(file.open(filename,O_RDONLY) == 0 ) error("File open failed");
+   if( file.seekSet(offset) == 0 ) error("\nSeek failed");
 
    /*  read the number of sectors requested, send status before each 256 bytes */
    while( count-- ){
@@ -362,7 +368,8 @@ Serial.write(' '); Serial.print(offset);
    file.close();
 }
 
-int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector ){
+
+int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector, unsigned long *off ){
 int cluster;
 int i;
 int chain;
@@ -373,22 +380,21 @@ int found;
 
     if( my_fat[cluster] > 0xf0 ) return -1;  // unused 
     
- //   for( i = 0; i < 48; i += 16 ){    // search head cluster in directory
- //       if( my_dir[i + 10] == cluster ) break;
- //   }                commented to see if the below code works
- //   if( i < 48 ) return i;            // return index to the directory entry
-
     // need to follow all the cluster chains until we find the one we want
     found = 0;
     for( i = 0; i < 48; i += 16 ){
-        chain = my_dir[i + 10];
-        while( chain < 0xc0 ){
+        *off = 0;
+        chain = my_dir[i + 10];     // the head cluster number in the directory entry
+        
+        while( chain < 0xc0 ){      // final cluster is 0xc0 + last sector #( 1 to 9 )
           if( chain == cluster ){
             found = 1;
             break;
           }
-          chain = my_fat[chain]; 
-        }        
+          chain = my_fat[chain];
+          *off += 9*256;            // add 9 sectors to the file offset
+        }
+                
         if(found) break;  
     }
     if( i < 48 ) return i;
