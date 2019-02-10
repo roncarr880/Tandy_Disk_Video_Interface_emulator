@@ -36,6 +36,8 @@
 #define FE 62     // File Exists ( rename error )
 #define DF 63     // Disk Full
 
+#define EOF 26
+
 #include <SPI.h>
 #include "SdFat.h"
 #include "sdios.h"
@@ -50,6 +52,11 @@ char cinBuf[40];   // Buffer for Serial input.
 ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input stream.
 
 #define error(msg) sd.errorHalt(F(msg))  // Error messages stored in flash.
+
+// Faking the image FAT and DIRECTORY, track 20.  Storing files as files and not in the image.
+// only tracks 0,1,2 and parts of 20 will come from the image. T20 S15 seems special and all zero's.
+unsigned char my_dir[768];  // 3 sectors, 48 files, others will be from the image, max 80 filenames/clusters
+unsigned char my_fat[80];    // one copy enough? fpr sectors 16,17,18.  80 clusters.
 
 void setup() {
    Serial.begin(38400);
@@ -94,8 +101,11 @@ void setup() {
       sd.initErrorHalt();
    }
 
-   sd.chdir("M200ROOT");
+   sd.chdir("M200ROOT/SCRTCH");
    Serial.println(F("Starting.."));
+
+   // for now, do this once here.  make a fake filesystem
+   mk_fake_fs();
 }
 
 void loop() {
@@ -218,9 +228,26 @@ unsigned char c, count, disk, track, sector;
    Serial.print(F(" Track "));  Serial.print(track);
    Serial.print(F(" Sector ")); Serial.print(sector);
 
+   // will the data be from the img or from the faked file system
+   if( track == 20 && sector <= 3 ){
+       read_directory(count,disk,track,sector);
+       return;
+   }
+   if( track == 20 && sector >= 16 ){
+       read_fat(count,disk,track,sector);
+       return;
+   }
+
+   if( track > 2 && track != 20 ){
+       read_file(count,disk,track,sector);
+       return;
+   }
+
+   // else we read system tracks 0,1,2 or parts of track 20 that are not faked
+   // mostly just during boot will we be here, also system reads T20 S15 all zero's for some reason
 
    // !!! set default directory here or address root with /M200ROOT/ ?
-   if(file.open("DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
+   if(file.open("/M200ROOT/SCRTCH/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
    // or open DSK1.IMG for disk 1
 
    // Simulating a 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39,
@@ -241,5 +268,189 @@ unsigned char c, count, disk, track, sector;
 
    file.close();  // !!! should file be a local object instead of global?
       
+}
+
+void read_directory(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector ){
+int x,y;
+   // size 768, 3 sectors, 16 bytes per entry
+   if( sector == 0 || sector > 3 ){
+       write_Aport(TS);     // bad sector
+       return;
+   }
+   y = 256 * ( sector - 1 );
+   while( count-- ){
+      write_Aport(0);               // add checking if y + 256 is off the end of the array and return error
+      for( x = 0; x < 256; ++x ){
+         write_Aport(my_dir[y++]); 
+      }
+   }   
+}
+
+void read_fat(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
+int x;  
+  // don't really need all those parameters
+  while( count-- ){
+      write_Aport(0);    // status
+      for( x = 0; x < 80; ++x ) write_Aport(my_fat[x]);
+      for( x = 80; x < 256; ++x ) write_Aport(0xff);     // pad out to a full sector
+  }
+  
+}
+
+void read_file(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
+int i;
+int x;
+char filename[15];
+int j;
+int head;
+unsigned char t,c;
+unsigned long offset;
+int stat;
+
+
+   i = find_dir_entry( disk,track,sector );
+   if( i == -1 ){
+       while( count-- ){
+          write_Aport(0);
+          for( x = 0; x < 256; ++x ) write_Aport(0xff);   // unused disk area was requested
+       }
+       return;
+   }
+
+   // make a proper filename from 6 by 3
+   j = 0;
+   for( x = 0; x < 6; ++x ){
+      if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
+      ++i;       
+   }
+   filename[j++] = '.';
+   for( x = 0; x < 3; ++x ){
+      if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
+      ++i;
+   }
+   // fix up if no extension
+   if( filename[j-1] == '.' ) filename[j-1] = 0;
+   filename[j] = 0;
+   
+   ++i;
+   head = my_dir[i];
+
+   // this will fail if clusters are not together, there should be an easier way to do this
+   // calc the file offset needed
+Serial.write(' '); Serial.print(head); Serial.write(' ');   
+   t = head/2;
+Serial.print(t);
+   offset = 256UL * 18UL * (unsigned long)(track - t);
+   offset += 256UL * (sector-1);
+   if( 2*t != head ) offset -= 256UL * 9;   //2nd cluster in the track
+
+Serial.write(' '); Serial.print(offset);
+   
+   // well I don't know if we are there but let it go
+      if(file.open(filename,O_RDONLY) == 0 ) error("File open failed");
+      if( file.seekSet(offset) == 0 ) error("\nSeek failed");
+
+   /*  read the number of sectors requested, send status before each 256 bytes */
+   while( count-- ){
+      write_Aport(0);      // !!! error status sent here, just faking it for now
+      for( x = 0; x < 256; ++x ){
+          c = stat = file.read();
+          if( stat == -1 ) c = EOF;   // end of file, start filling with EOF
+          write_Aport(c);
+      } 
+   }
+   file.close();
+}
+
+int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector ){
+int cluster;
+int i;
+int chain;
+int found;
+
+    cluster = 2 * track;
+    if( sector > 9 ) cluster += 1;
+
+    if( my_fat[cluster] > 0xf0 ) return -1;  // unused 
+    
+ //   for( i = 0; i < 48; i += 16 ){    // search head cluster in directory
+ //       if( my_dir[i + 10] == cluster ) break;
+ //   }                commented to see if the below code works
+ //   if( i < 48 ) return i;            // return index to the directory entry
+
+    // need to follow all the cluster chains until we find the one we want
+    found = 0;
+    for( i = 0; i < 48; i += 16 ){
+        chain = my_dir[i + 10];
+        while( chain < 0xc0 ){
+          if( chain == cluster ){
+            found = 1;
+            break;
+          }
+          chain = my_fat[chain]; 
+        }        
+        if(found) break;  
+    }
+    if( i < 48 ) return i;
+    else return -1;
+}
+
+
+
+void mk_fake_fs(){
+int i;
+
+   // format.  fill the arrays with ff
+   for( i = 0; i < 80; ++i ) my_fat[i] = 0xff;
+   for( i = 0; i < 768; ++i ) my_dir[i] = 0xff;
+
+   // set the system area's in the fat
+   for( i = 0; i < 6; ++i ) my_fat[i] = 0xfe;   // boot tracks 0,1,2
+   my_fat[40] = 0xfe;  my_fat[41] = 0xfe;       // directory track 20 clusters
+   
+   // just setting up 3 known files for testing, this code will be changed 
+   // dasm 13 sectors,  nemon 4 sectors, xpand 3 sectors
+
+   my_dir[0] = 'D';
+   my_dir[1] = 'A';
+   my_dir[2] = 'S';
+   my_dir[3] = 'M';
+   my_dir[4] = ' ';
+   my_dir[5] = ' ';
+   my_dir[6] = 'B';
+   my_dir[7] = 'A';
+   my_dir[8] = ' ';
+   my_dir[9] = 0;     // 0 is text file.  1 is CO and 0x80 is a basic token file
+   my_dir[10] = 12;   // head cluster, fake track 6
+   // rest are unused
+   my_fat[12] = 13;   // chain of cluster numbers in fat
+   my_fat[13] = 0xc0 + 4;
+   
+   my_dir[16] = 'N';
+   my_dir[17] = 'E';
+   my_dir[18] = 'M';
+   my_dir[19] = 'O';
+   my_dir[20] = 'N';
+   my_dir[21] = ' ';
+   my_dir[22] = 'B';
+   my_dir[23] = 'A';
+   my_dir[24] = ' ';
+   my_dir[25] = 0;
+   my_dir[26] = 18;   // track 9
+   my_fat[18] = 0xc0 + 4;
+
+   my_dir[32] = 'X';
+   my_dir[33] = 'P';
+   my_dir[34] = 'A';
+   my_dir[35] = 'N';
+   my_dir[36] = 'D';
+   my_dir[37] = ' ';
+   my_dir[38] = 'B';
+   my_dir[39] = 'A';
+   my_dir[40] = ' ';
+   my_dir[41] = 0;
+   my_dir[42] = 21;  // track 10 2nd cluster 
+   my_fat[21] = 0xc0 + 3;
+     
 }
 
