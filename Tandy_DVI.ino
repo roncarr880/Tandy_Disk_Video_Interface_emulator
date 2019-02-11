@@ -49,6 +49,7 @@
 #include <SPI.h>
 #include "SdFat.h"
 #include "sdios.h"
+
 const uint8_t chipSelect = 4;
 
 SdFat sd;
@@ -114,7 +115,8 @@ void setup() {
    Serial.println(F("Starting.."));
 
    // for now, do this once here.  make a fake filesystem
-   mk_fake_fs();
+   mk_fake_fs2();
+  // mk_fake_fs();
 }
 
 void loop() {
@@ -191,12 +193,21 @@ unsigned char command;
 
 void unknown_dispatch(unsigned char function){
 unsigned char c;
+static unsigned long last_time;
   
   Serial.print(F("Unknown Dispatch Function ")); Serial.print(function );
   c = read_Aport();
   Serial.print(F(" Port A "));  Serial.print(c ); Serial.write(' ');
   if( isalnum(c)) Serial.write(c);
   Serial.println();
+
+  if( last_time == millis() ){    // the M200 probably powered off
+      digitalWrite(A8,HIGH);      // reset the 82C55, all pins inputs
+      delay(1000);                // wait a long time
+      digitalWrite(A8,LOW);
+  }
+  
+  last_time = millis();
 }
 
 unsigned char read_Aport(){
@@ -258,7 +269,7 @@ unsigned char c, count, disk, track, sector;
    // mostly just during boot will we be here, also system reads T20 S15 all zero's for some reason
 
    // !!! set default directory here or address root with /M200ROOT/ ?
-   if(file.open("/M200ROOT/SCRTCH/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
+   if(file.open("/M200ROOT/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
    // or open DSK1.IMG for disk 1
 
    // Simulating a 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39,
@@ -413,10 +424,100 @@ int found;
 }
 
 
+void mk_fake_fs2(){    // make a fake filesystem 180k floppy
+int i,j;
+
+SdFile root;
+SdFile file;
+char filename[30];
+unsigned long file_size;
+int type;
+int entry,head,sectors;
+
+   // format.  fill the arrays with ff
+   for( i = 0; i < 80; ++i ) my_fat[i] = 0xff;
+   for( i = 0; i < DIR_SIZE; ++i ) my_dir[i] = 0xff;
+
+   // set the system area's in the fat
+   for( i = 0; i < 6; ++i ) my_fat[i] = 0xfe;   // boot tracks 0,1,2
+   my_fat[40] = 0xfe;  my_fat[41] = 0xfe;       // directory track 20 uses 2 clusters
+
+   root.open("/M200ROOT/SCRTCH",O_RDONLY);      // open directory
+   root.rewind();
+   
+   entry = 0; head = 6;                         // dir entry, head cluster
+   while(file.openNext(&root,O_RDONLY)){        // open each file in directory
+       file.getName(filename,29);
+       file_size = file.fileSize();
+       
+       type = 0;                               // text file as default type
+       for( i = 0; i < 40; ++i){
+          j = file.read();
+          if( j == -1 ) break;                 // end of file
+          if( j >= 128 ) type = 1;              // binary data in file
+       }
+
+       // fill in the directory entry
+       for( i = 0; i < 9; ++i ) my_dir[entry+i] = ' ';   // pad with spaces
+       for( i = 0; i < 6; ++i ){                         // get filename 6 characters max
+           if( filename[i] == 0 ) break;
+           if( filename[i] == '.' ) break;
+           my_dir[entry+i] = filename[i];
+       }
+       // now get the extension if any
+       if( filename[i] == '.' ){
+           ++i; j = 6;                        // position of the extension
+           while( j < 9 ){
+              if( filename[i] == 0) break;
+              my_dir[entry+j] = filename[i++];
+              ++j;
+           }  
+       }
+
+       if( type == 1 && my_dir[entry+6] == 'B' ) type = 0x80;   // good chance it is a basic token file
+       my_dir[entry+9] = type;
+
+       my_dir[entry+10] = head;                              // pointer to head cluster
+       Serial.print(F("Cluster "));  Serial.print(head);  Serial.write(' ');       
+       sectors = file_size / 256UL;
+       sectors += 1;
+
+       while( sectors > 9 ){                                 // chain the clusters
+          j = head;
+          my_fat[j] = head = bump_head(j);
+          Serial.print(head);  Serial.write(' ');
+          sectors -= 9;
+       }
+
+       my_fat[head] = 0xc0 + sectors;                        // chain terminator
+       head = bump_head(head);                               // next free cluster
+       
+       Serial.print(filename);  Serial.write(' '); Serial.println(file_size);
+       // Serial.print(F("   Slack "));  Serial.println( (9 - sectors) * 256 );
+       file.close();
+
+       entry += 16;                        // next directory entry
+       if( entry >= DIR_SIZE ) break;      // out of space in directory
+   }
+   root.close();
+  
+}
+
+
+int bump_head( int cluster ){    // find the next free cluster
+
+   ++cluster;
+   while( my_fat[cluster] != 0xff ){
+      ++cluster;
+      if( cluster >= 80 ) return 79;  // disk full, just overwrite the last cluster over and over  
+   }
+   return cluster;
+}
+
 
 void mk_fake_fs(){
 int i;
-
+   
    // format.  fill the arrays with ff
    for( i = 0; i < 80; ++i ) my_fat[i] = 0xff;
    for( i = 0; i < 768; ++i ) my_dir[i] = 0xff;
