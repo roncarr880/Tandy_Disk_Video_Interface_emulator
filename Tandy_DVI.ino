@@ -1,5 +1,5 @@
 /************
- * Tandy DVI
+ * Tandy DVI.   The disk video interface for the Tandy M100, M102, and M200 laptops.
  *   Mega 2560, proto board with 82C55 interface, and a SD card board.  The circuit is loosely
  *   based upon the schematic in the DVI service manual. 
  *   
@@ -64,7 +64,7 @@ ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input s
 
 // Faking the image FAT and DIRECTORY, track 20.  Storing files as files and not in the image.
 // only tracks 0,1,2 and parts of 20 will come from the image. T20 S15 seems special and all zero's.
-unsigned char my_dir[DIR_SIZE];  // 3 sectors, 48 files
+unsigned char my_dir[DIR_SIZE];          // 3 sectors, 48 files
 unsigned char my_dir_backup[DIR_SIZE];   // needed for kill and rename functions
 unsigned char my_fat[80];    // one copy enough? for sectors 16,17,18.  80 clusters.
                              // double subscript these for drive 1 if end up with enough ram
@@ -82,6 +82,11 @@ int wbytecount;
 // kill a file( directory write + 6 fat writes ) or rename a file( a directory write only )
 unsigned char ren_kill_flag;
 unsigned long ren_kill_time;
+unsigned char cluster_fragments;     // a sequential file that spans more than one cluster,
+                                     // the fat is updated after the file is written
+                                     // but can't determine the filename until the fat is
+                                     // updated, so the data is written out to temp files and
+                                     // the correct file is updated later
                                                           
 void setup() {
    Serial.begin(38400);
@@ -154,15 +159,34 @@ unsigned char function;
   // special detect for rename and kill functions. They are somewhat invisible as to what happened
   if( ren_kill_flag ){
      if( (millis() - ren_kill_time)  > 1000 ){    // maybe shorten this ?
-        if( ren_kill_flag == 1 ) Serial.println(F("Rename Event"));
+        if( ren_kill_flag == 1 ) rename_file();
         else if( ren_kill_flag == 7 ) delete_file();
-        else if( ren_kill_flag == 3 ) Serial.println(F("Seqential File Open"));
-        else Serial.println(F("Unknown File Event"));  // this happens on sequential file open
+        else if( ren_kill_flag == 4 ) Serial.println(F("Seqential File Open"));  // !! strange one look again
+        else Serial.println(F("Unknown File Event"));
         ren_kill_flag = 0;
      }
   }
 
 }
+
+void rename_file(){    // search for a rename event
+int i;
+char new_name[30];
+char old_name[30];
+
+    for(i = 0;  i < DIR_SIZE; i += 16 ){
+      if( my_dir[i] == 0 ) continue;
+      if( my_dir[i+10] == 0xff ) continue;
+      make_filename(i,new_name);
+      make_filename2(i,old_name);
+      if( strcmp(new_name,old_name) == 0 ) continue;
+
+      sd.rename(old_name,new_name);
+      Serial.print(F("Rename "));  Serial.print(old_name);
+      Serial.print(F(" to " ));   Serial.println(new_name);
+    }
+}
+
 
 void delete_file(){
 int i;
@@ -204,8 +228,8 @@ unsigned char c;    // seems to be sent on ram bank change and on boot
     Serial.print(F("Function4 "));  Serial.println(c);
 
     wdestination = NONE;
-    file.flush();
     file.close();
+    fix_fragments();
 }
 
 //void ctrl_break(){   // control break was pressed ?
@@ -273,6 +297,7 @@ static unsigned long last_time;
   if( isalnum(c)) Serial.write(c);
   Serial.println();
 
+  // are these happening really really fast
   if( (millis() - last_time) < 30 ){    // the M200 probably powered off
       digitalWrite(A8,HIGH);      // reset the 82C55, all pins inputs
       delay(1000);                // wait a long time
@@ -282,7 +307,7 @@ static unsigned long last_time;
   last_time = millis();
 }
 
-unsigned char read_Aport(){
+unsigned char read_Aport(){        // 82C55 port A handshake mode
 unsigned char c;
 
   while( digitalRead(OBFA) ){                // wait for data 
@@ -311,8 +336,8 @@ void disk_img_write(){
 unsigned char c;
 unsigned long offset;
 char filename[15];
-static char oldfilename[15];
 int i;
+int cluster;
 
    offset = 0;
    wcount = read_Aport();
@@ -331,32 +356,39 @@ int i;
    // find the write destination
    if( wtrack == 20 && wsector <= 3 ){
       wdestination = DIRECTORY;
-      ren_kill_flag = 1;    // flag a directory write
-      backup_directory();
+      ren_kill_flag = 1;         // flag a directory write
+      backup_directory();        // save current before writing
       ren_kill_time = millis();
    }
    if( wtrack == 20 && wsector >= 16 ){
       wdestination = FAT;
-      if( ren_kill_flag ) ++ren_kill_flag;  // count fat writes
+      if( ren_kill_flag ) ++ren_kill_flag;    // count fat writes
+      if( wsector == 18 && cluster_fragments ) fix_fragments();
    }
    if( wtrack > 2 && wtrack != 20 ){
       wdestination = FILE;
-      ren_kill_flag = 0;               // something other than rename or kill command
+      ren_kill_flag = 0;    // it is something other than rename or kill command
    }
 
    if( wdestination == FILE ){
       i = find_dir_entry(wdisk,wtrack,wsector,&offset);
       
       if( i == -1 ){            // shouldn't happen unless fat is not up to date
-        Serial.print(F(" Using old filename "));   // this happens when
-                                                   // writing sequential text
-                                                   // happens when a new cluster is needed
-        strcpy(filename,oldfilename);              // use the previous file and hope for the best 
-        offset = 42;                               // something not zero                          
-      }                                            // what a terrible hack
+        //Serial.print(F(" Cluster fragment "));   // this happens when
+                                                   // writing sequential text and
+                                                   // when the file needs more than 1 cluster
+                                                   // the FAT is updated after the data write
+        cluster = wtrack * 2;
+        if( wsector >= 10 ) cluster += 1;
+        offset = 0;
+        strcpy( filename,"cluster_" );     //7
+        i = cluster / 10;    filename[8] = i + '0';  
+        i = cluster % 10;    filename[9] = i + '0';
+        filename[10] = 0;
+        cluster_fragments = 1;                    // flag to clean up when write FAT        
+      }
       else{
         make_filename(i,filename);
-        strcpy(oldfilename,filename);           // save the filename in case needed
       }
       
       offset += 256UL * (unsigned long)((wsector-1) % 9);
@@ -587,7 +619,66 @@ int j,x;
  
 }
 
+void fix_fragments(){
+int i,j;
+unsigned char chain;
+unsigned char fixed;
+char filename[30];
 
+   // need to process the files in the correct order
+   // go through directory for each entry, follow the cluster chain, check for a file
+   // and append the file if found.  set cluster_fragments to zero if fixed any
+    fixed = 0;
+    for( i = 0; i < DIR_SIZE; i += 16 ){
+      
+        chain = my_dir[i + 10];     // the head cluster number in the directory entry
+                     
+        if( chain == 0xff ) continue;
+                                    
+        chain = my_fat[chain];      // the head should not be a fragment, so skip the 1st one          
+        while( chain < 0xc0 ){      // final cluster is 0xc0 + last sector #( 1 to 9 )
+            // make the filename and see if it exists
+            strcpy(filename,"cluster_");
+            j = chain/10;
+            filename[8] = j + '0';
+            j = chain % 10;
+            filename[9] = j + '0';
+            filename[10] = 0;
+            if( sd.exists(filename)) copy_fragment(filename,i) , ++fixed;
+            chain = my_fat[chain];
+        }
+                  
+    }
+    if( fixed ) cluster_fragments = 0;
+}
+
+void copy_fragment( char *fragment, int di ){
+   // get the directory filename and copy fragment to the end of the directory file
+char filename[30];
+SdFile fromfile;
+SdFile tofile;
+unsigned char c;
+int stat;
+
+    make_filename(di,filename);
+    tofile.open(filename,O_WRONLY | O_AT_END);
+    fromfile.open(fragment,O_RDONLY);
+
+    Serial.println();
+    Serial.print(F(" Copy ")); Serial.print(fragment); 
+    Serial.print(F(" to "));   Serial.print(filename);
+    
+    while(1){
+       c = stat = fromfile.read();
+       if( stat == -1 ) break;
+       tofile.write(c);
+    }
+
+    fromfile.close();
+    tofile.close();
+
+    sd.remove(fragment);
+}
 
 int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector, unsigned long *off ){
 int cluster;
@@ -647,6 +738,12 @@ int entry,head,sectors;
    while(file.openNext(&root,O_RDONLY)){        // open each file in directory
        file.getName(filename,29);
        file_size = file.fileSize();
+
+       // skip any lost cluster files
+       if( strstr(filename,"cluster_") ){
+        file.close();
+        continue;
+       }
        
        type = 0;                               // text file as default type
        for( i = 0; i < 40; ++i){
