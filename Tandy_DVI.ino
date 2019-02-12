@@ -65,9 +65,24 @@ ArduinoInStream cin(Serial, cinBuf, sizeof(cinBuf));  // Create a serial input s
 // Faking the image FAT and DIRECTORY, track 20.  Storing files as files and not in the image.
 // only tracks 0,1,2 and parts of 20 will come from the image. T20 S15 seems special and all zero's.
 unsigned char my_dir[DIR_SIZE];  // 3 sectors, 48 files
+unsigned char my_dir_backup[DIR_SIZE];   // needed for kill and rename functions
 unsigned char my_fat[80];    // one copy enough? for sectors 16,17,18.  80 clusters.
                              // double subscript these for drive 1 if end up with enough ram
                              
+// globals for writing to fake filesystem
+unsigned char wcount,wdisk,wtrack,wsector,wdestination;
+int wbytecount;
+// destination of the write
+#define NONE 0
+#define FAT  1
+#define DIRECTORY 2
+#define FILE 3
+
+// some events are difficult to detect as only the directory and fat are written
+// kill a file( directory write + 6 fat writes ) or rename a file( a directory write only )
+unsigned char ren_kill_flag;
+unsigned long ren_kill_time;
+                                                          
 void setup() {
    Serial.begin(38400);
 
@@ -112,6 +127,7 @@ void setup() {
    }
 
    sd.chdir("M200ROOT/SCRTCH");
+   Serial.println();
    Serial.println(F("Starting.."));
 
    // for now, do this once here.  make a fake filesystem
@@ -135,13 +151,61 @@ unsigned char function;
     }      
   }
 
+  // special detect for rename and kill functions. They are somewhat invisible as to what happened
+  if( ren_kill_flag ){
+     if( (millis() - ren_kill_time)  > 1000 ){    // maybe shorten this ?
+        if( ren_kill_flag == 1 ) Serial.println(F("Rename Event"));
+        else if( ren_kill_flag == 7 ) delete_file();
+        else if( ren_kill_flag == 3 ) Serial.println(F("Seqential File Open"));
+        else Serial.println(F("Unknown File Event"));  // this happens on sequential file open
+        ren_kill_flag = 0;
+     }
+  }
+
 }
+
+void delete_file(){
+int i;
+char filename[30];
+char longpath[80];
+char longpath2[80];
+ 
+  // what file was deleted ?
+  filename[0] = '?'; filename[1] = 0;
+
+  for( i = 0; i < DIR_SIZE; i += 16 ){   // search the directory and backup for changes
+      if( my_dir[i] == 0 && my_dir_backup[i] != 0 ) break;
+  }
+
+  if( i < DIR_SIZE ){
+      make_filename2(i,filename);
+      // move to the backup folders rather than delete
+      strcpy(longpath,"/backup3/");
+      strcat(longpath,filename);
+      if( sd.exists(longpath) ) sd.remove(longpath);
+      strcpy(longpath2,"/backup2/");
+      strcat(longpath2,filename);
+      sd.rename(longpath2,longpath);
+      strcpy(longpath,"/backup1/");
+      strcat(longpath,filename);
+      sd.rename(longpath,longpath2);
+      sd.rename(filename,longpath);    // will the default working directory be picked up
+  }
+  
+  Serial.print(F("File Deleted")); Serial.write(' '); Serial.println(filename);
+
+}
+
 
 void function4(){   // what does function 4 do, reset all? or attention?
 unsigned char c;    // seems to be sent on ram bank change and on boot
 
     c = read_Aport();
     Serial.print(F("Function4 "));  Serial.println(c);
+
+    wdestination = NONE;
+    file.flush();
+    file.close();
 }
 
 //void ctrl_break(){   // control break was pressed ?
@@ -150,9 +214,17 @@ unsigned char c;    // seems to be sent on ram bank change and on boot
 //}
 
 void disk_data(){
+unsigned char c;
   
-    read_Aport();   // throw it away for now
-}
+    c = read_Aport();
+    switch(wdestination){
+      case NONE:     break;    // bit bucket
+      case FILE:   write_file(c);   break;
+      case FAT:    write_fat(c);    break;
+      case DIRECTORY: write_directory(c);  break;
+    }
+    
+}    
 
 void crt_read(){    // not sure we can support this unless we keep fake video memory
                     // how many bytes is the M200 expecting?
@@ -182,7 +254,7 @@ unsigned char command;
          // mk_floppy_img();  // maybe
          write_Aport(128);  // this response seems to work after a cold boot
        break;
-       case 1:                    break;  // this will be a write to disk
+       case 1:  disk_img_write(); break;
        case 2:  disk_img_read();  break;
    }
 
@@ -201,7 +273,7 @@ static unsigned long last_time;
   if( isalnum(c)) Serial.write(c);
   Serial.println();
 
-  if( last_time == millis() ){    // the M200 probably powered off
+  if( (millis() - last_time) < 30 ){    // the M200 probably powered off
       digitalWrite(A8,HIGH);      // reset the 82C55, all pins inputs
       delay(1000);                // wait a long time
       digitalWrite(A8,LOW);
@@ -235,10 +307,116 @@ void write_Aport( unsigned char c ){
   DDRA = 0x00;                // leave the A port defaulted to inputs
 }
 
+void disk_img_write(){
+unsigned char c;
+unsigned long offset;
+char filename[15];
+static char oldfilename[15];
+int i;
+
+   offset = 0;
+   wcount = read_Aport();
+   wdisk = read_Aport();
+   wtrack = read_Aport();
+   wsector = read_Aport();
+
+   Serial.print(F(" Count "));  Serial.print(wcount);
+   Serial.print(F(" Disk "));   Serial.print(wdisk);
+   Serial.print(F(" Track "));  Serial.print(wtrack);
+   Serial.print(F(" Sector ")); Serial.print(wsector);
+
+   write_Aport(0);
+
+   wbytecount = 0;
+   // find the write destination
+   if( wtrack == 20 && wsector <= 3 ){
+      wdestination = DIRECTORY;
+      ren_kill_flag = 1;    // flag a directory write
+      backup_directory();
+      ren_kill_time = millis();
+   }
+   if( wtrack == 20 && wsector >= 16 ){
+      wdestination = FAT;
+      if( ren_kill_flag ) ++ren_kill_flag;  // count fat writes
+   }
+   if( wtrack > 2 && wtrack != 20 ){
+      wdestination = FILE;
+      ren_kill_flag = 0;               // something other than rename or kill command
+   }
+
+   if( wdestination == FILE ){
+      i = find_dir_entry(wdisk,wtrack,wsector,&offset);
+      
+      if( i == -1 ){            // shouldn't happen unless fat is not up to date
+        Serial.print(F(" Using old filename "));   // this happens when
+                                                   // writing sequential text
+                                                   // happens when a new cluster is needed
+        strcpy(filename,oldfilename);              // use the previous file and hope for the best 
+        offset = 42;                               // something not zero                          
+      }                                            // what a terrible hack
+      else{
+        make_filename(i,filename);
+        strcpy(oldfilename,filename);           // save the filename in case needed
+      }
+      
+      offset += 256UL * (unsigned long)((wsector-1) % 9);
+      Serial.write(' ');  Serial.print(filename);
+      Serial.write(' ');  Serial.print(offset);
+     // open file here, may need to check if exists and move to backup versions
+      int flags = O_WRONLY;
+      if( offset == 0 ) flags |= O_CREAT;
+      else flags |= O_AT_END;
+      if( file.open(filename,flags ) == 0 ){   // don't need to seek offset with O_AT_END
+          Serial.print(F(" Open for write failed"));
+      }
+   }
+}
+
+
+void write_directory( unsigned char c ){   
+int index;
+
+    index = 256*(wsector-1);
+    index += wbytecount;
+    ++wbytecount;
+
+    if( index < DIR_SIZE ) my_dir[index] = c;
+     
+    if( wbytecount >= 256*(int)wcount ) wdestination = NONE;   // done
+    
+}
+
+void backup_directory(){   // make a copy as the filenames are zero'd out on delete
+int i;
+
+     for( i = 0; i < DIR_SIZE; ++i ) my_dir_backup[i] = my_dir[i];
+}
+
+void write_fat( unsigned char c ){
+
+    if( wbytecount < 80 ) my_fat[wbytecount] = c;
+    ++wbytecount;
+
+    if( wbytecount >= 256*(int)wcount ) wdestination = NONE;
+
+}
+
+void write_file( unsigned char c ){
+
+   file.write(c);
+   ++wbytecount;
+   if( wbytecount >= 256*(int)wcount ){
+      wdestination = NONE;
+      file.close();
+   }
+}
+
+
 void disk_img_read(){
 unsigned long file_offset;
 int stat,x;
 unsigned char c, count, disk, track, sector;
+SdFile file;
 
    count = read_Aport();
    disk = read_Aport();
@@ -256,7 +434,7 @@ unsigned char c, count, disk, track, sector;
        return;
    }
    if( track == 20 && sector >= 16 ){
-       read_fat(count,disk,track,sector);
+       read_fat(count);
        return;
    }
 
@@ -266,7 +444,8 @@ unsigned char c, count, disk, track, sector;
    }
 
    // else we read system tracks 0,1,2 or parts of track 20 that are not faked
-   // mostly just during boot will we be here, also system reads T20 S15 all zero's for some reason
+   // mostly just during boot will we be here,
+   // also the system reads T20 S15 which is all zero's for some reason
 
    // !!! set default directory here or address root with /M200ROOT/ ?
    if(file.open("/M200ROOT/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
@@ -288,7 +467,7 @@ unsigned char c, count, disk, track, sector;
       } 
    }
 
-   file.close();  // !!! should file be a local object instead of global?
+   file.close();
       
 }
 
@@ -308,9 +487,9 @@ int x,y;
    }   
 }
 
-void read_fat(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
+void read_fat(unsigned char count){
 int x;  
-  // don't really need all those parameters
+
   while( count-- ){
       write_Aport(0);    // status
       for( x = 0; x < 80; ++x ) write_Aport(my_fat[x]);
@@ -320,7 +499,7 @@ int x;
 }
 
 void read_file(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
-int x,i,j;
+int x,i;
 char filename[15];
 // int head;
 // unsigned char t
@@ -341,41 +520,17 @@ int stat;
        return;
    }
 
-   // make a proper filename from 6 by 3, filenames are stored with space padding and 3 character
-   // extension by its position in the 9 character field
-   j = 0;
-   for( x = 0; x < 6; ++x ){     // pick up the filename ignoring spaces
-      if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
-      ++i;       
-   }
-   filename[j++] = '.';          // get the extension ignoring spaces
-   for( x = 0; x < 3; ++x ){
-      if( my_dir[i] != ' ' ) filename[j++] = my_dir[i];
-      ++i;
-   }
-   // fix up if no extension
-   if( filename[j-1] == '.' ) filename[j-1] = 0;
-   filename[j] = 0;
+   make_filename(i,filename);
    
- //  ++i;
- //  head = my_dir[i];
-
-//!!! think add 256UL * (sector-1)%9; to the offset  mod 9, 0 to 8 and 9 to 17
-   // this will fail if clusters are not together, there should be an easier way to do this
-   // calc the file offset needed
-//Serial.write(' '); Serial.print(head); Serial.write(' ');   
-//   t = head/2;
-//Serial.print(t);
-//   offset = 256UL * 18UL * (unsigned long)(track - t);
-//   if( 2*t != head ) offset -= 256UL * 9UL;   //2nd cluster in the track
-
    offset += 256UL * (unsigned long)((sector-1) % 9);
 
    Serial.write(' '); Serial.print(filename);
    Serial.write(' '); Serial.print(offset);
    
-   // well I don't know if we are there but let it go
-   if(file.open(filename,O_RDONLY) == 0 ) error("File open failed");
+   if(file.open(filename,O_RDONLY) == 0 ){
+      write_Aport(FF);
+      return;
+   }
    if( file.seekSet(offset) == 0 ) error("\nSeek failed");
 
    /*  read the number of sectors requested, send status before each 256 bytes */
@@ -389,6 +544,49 @@ int stat;
    }
    file.close();
 }
+
+void make_filename(int i, char buf[] ){
+int j,x;
+   
+   // make a proper filename 6 by 3, filenames are stored with space padding and 3 character
+   // extension by its position in the 9 character field
+   j = 0;
+   for( x = 0; x < 6; ++x ){     // pick up the filename ignoring spaces
+      if( my_dir[i] != ' ' ) buf[j++] = my_dir[i];
+      ++i;       
+   }
+   buf[j++] = '.';          // get the extension ignoring spaces
+   for( x = 0; x < 3; ++x ){
+      if( my_dir[i] != ' ' ) buf[j++] = my_dir[i];
+      ++i;
+   }
+   // fix up if no extension
+   if( buf[j-1] == '.' ) buf[j-1] = 0;
+   buf[j] = 0;
+ 
+}
+
+void make_filename2(int i, char buf[] ){   // look for filenames in the backup directory
+int j,x;
+   
+   // make a proper filename 6 by 3, filenames are stored with space padding and 3 character
+   // extension by its position in the 9 character field
+   j = 0;
+   for( x = 0; x < 6; ++x ){     // pick up the filename ignoring spaces
+      if( my_dir_backup[i] != ' ' ) buf[j++] = my_dir_backup[i];
+      ++i;       
+   }
+   buf[j++] = '.';          // get the extension ignoring spaces
+   for( x = 0; x < 3; ++x ){
+      if( my_dir_backup[i] != ' ' ) buf[j++] = my_dir_backup[i];
+      ++i;
+   }
+   // fix up if no extension
+   if( buf[j-1] == '.' ) buf[j-1] = 0;
+   buf[j] = 0;
+ 
+}
+
 
 
 int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector, unsigned long *off ){
