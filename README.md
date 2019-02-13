@@ -5,7 +5,4 @@ Dasm.ino - reads an image file on the SD card and outputs 8085 assembly. Disasse
 DVI.DAT  - A disk image file for the M100 or M200 laptops.\
 Tandy_DVI.ino - The main program that emulates the DVI.
 
-Status:  It boots and reads sectors from the image.  It reads and writes files to/from the SD card.\
-Files can be deleted or renamed.  Sequential data files can be read and written.
-
-Todo:  Need a chdir command and remove the hardcoding of the directory path.
+Status:  Very usable now.
