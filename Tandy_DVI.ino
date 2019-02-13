@@ -82,6 +82,11 @@ int wbytecount;
 // kill a file( directory write + 6 fat writes ) or rename a file( a directory write only )
 unsigned char ren_kill_flag;
 unsigned long ren_kill_time;
+
+// space to store directory names for simulating changing the floppy in the drive
+char dir_names[10][9];    // arbitrary 10 names at 8 characters long for now
+                          // M200 has 6 character filenames, so I think this will be ok
+char directory_path[30];                          
                                                           
 void setup() {
    Serial.begin(38400);
@@ -126,13 +131,56 @@ void setup() {
       sd.initErrorHalt();
    }
 
-   sd.chdir("M200ROOT/SCRTCH");
+ //  sd.chdir("M200ROOT/SCRTCH");
    Serial.println();
    Serial.println(F("Starting.."));
 
    // for now, do this once here.  make a fake filesystem
-   mk_fake_fs2();
+  // mk_fake_fs2();
   // mk_fake_fs();
+
+   directory_search();
+   change_directory();
+   
+}
+
+
+void directory_search(){   // fill out the dir_names array
+SdFile root;
+SdFile file;
+char filename[30];
+int i = 0;
+
+  
+   root.open("/M200ROOT",O_RDONLY); 
+   while (file.openNext(&root, O_RDONLY)){
+     if( file.isDir() ){
+         file.getName(filename,29);
+         filename[8] = 0;          // make sure it fits
+         strcpy(dir_names[i++],filename);        
+     }
+     file.close();
+     if( i >= 10 ) break;          // no more unless the names size is increased
+   }
+   root.close(); 
+}
+
+void change_directory(){   // change to each directory in turn, like swapping floppies
+static int next;
+char filename[30];
+
+   if( dir_names[0][0] == 0 ) error("No directories found");
+   strcpy(filename,"/M200ROOT/");
+   strcat(filename,dir_names[next]);
+   strcpy(directory_path,filename);      // not sure how mk_fake_fs is supposed to see the path
+   sd.chdir(filename);
+
+   ++next;                     // rotate through the names
+   if( next >= 10 ) next = 0;
+   if( dir_names[next][0] == 0 ) next = 0;
+
+   mk_fake_fs2();
+  
 }
 
 void loop() {
@@ -268,12 +316,12 @@ unsigned char command;
 
    switch(command){
        case 0:              // not sure what this command is, recal?
-         delay(3);          // delay probably not needed
-         // mk_floppy_img();  // maybe
-         write_Aport(128);  // this response seems to work after a cold boot
+         //delay(3);          // delay probably not needed
+         write_Aport(128);   // this response seems to work, hangs on return of many other values
        break;
        case 1:  disk_img_write(); break;
        case 2:  disk_img_read();  break;
+       case 8:  change_directory();
    }
 
    Serial.println();
@@ -314,16 +362,17 @@ unsigned char c;
   return c;
 }
 
-void write_Aport( unsigned char c ){
+unsigned char write_Aport( unsigned char c ){
 
   while( digitalRead(IBFA) ){              // wait for Tandy M200 to read the old data
-     if( (PINB >> 4) == 4 ) return;  // break;  // look for reset on the B port.
+     if( (PINB >> 4) == 4 ) return 128;  // break;  // look for reset on the B port.
   }
   PORTA = c;
   DDRA = 0xff;                // outputs 
   digitalWrite(STBA,LOW);
   digitalWrite(STBA,HIGH);
   DDRA = 0x00;                // leave the A port defaulted to inputs
+  return 0;
 }
 
 void disk_img_write(){
@@ -485,11 +534,11 @@ SdFile file;
 
    /*  read the number of sectors requested, send status before each 256 bytes */
    while( count-- ){
-      write_Aport(0);      // !!! error status sent here, just faking it for now
+      write_Aport(0);      // error status sent here, just faking it for now
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
           //if( stat == -1 ) error("End of file\n");
-          write_Aport(c);
+          if( write_Aport(c) ) break;
       } 
    }
 
@@ -508,7 +557,7 @@ int x,y;
    while( count-- ){
       write_Aport(0);               // add checking if y + 256 is off the end of the array and return error
       for( x = 0; x < 256; ++x ){
-         write_Aport(my_dir[y++]); 
+        if( write_Aport(my_dir[y++]) ) break; 
       }
    }   
 }
@@ -518,8 +567,8 @@ int x;
 
   while( count-- ){
       write_Aport(0);    // status
-      for( x = 0; x < 80; ++x ) write_Aport(my_fat[x]);
-      for( x = 80; x < 256; ++x ) write_Aport(0xff);     // pad out to a full sector
+      for( x = 0; x < 80; ++x ) if(write_Aport(my_fat[x]) ) break;
+      for( x = 80; x < 256; ++x ) if( write_Aport(0xff)) break;     // pad out to a full sector
   }
   
 }
@@ -541,7 +590,7 @@ int stat;
    if( i == -1 ){                      // unused disk area was requested
        while( count-- ){               // send all 0xff's, ignore if count more than 1
           write_Aport(0);              // actually moves into a used area
-          for( x = 0; x < 256; ++x ) write_Aport(0xff);   
+          for( x = 0; x < 256; ++x ) if(write_Aport(0xff)) break;   
        }
        return;
    }
@@ -565,7 +614,7 @@ int stat;
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
           if( stat == -1 ) c = EOF;   // end of file, start filling with EOF
-          write_Aport(c);
+          if( write_Aport(c) ) break;
       } 
    }
    file.close();
@@ -662,6 +711,7 @@ unsigned long file_size;
 int type;
 int entry,head,sectors;
 
+   Serial.println();
    // format.  fill the arrays with ff
    for( i = 0; i < 80; ++i ) my_fat[i] = 0xff;
    for( i = 0; i < DIR_SIZE; ++i ) my_dir[i] = 0xff;
@@ -670,7 +720,7 @@ int entry,head,sectors;
    for( i = 0; i < 6; ++i ) my_fat[i] = 0xfe;   // boot tracks 0,1,2
    my_fat[40] = 0xfe;  my_fat[41] = 0xfe;       // directory track 20 uses 2 clusters
 
-   root.open("/M200ROOT/SCRTCH",O_RDONLY);      // open directory
+   root.open(directory_path,O_RDONLY);      // open directory
    root.rewind();
    
    entry = 0; head = 6;                         // dir entry, head cluster
