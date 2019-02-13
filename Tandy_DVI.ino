@@ -82,11 +82,6 @@ int wbytecount;
 // kill a file( directory write + 6 fat writes ) or rename a file( a directory write only )
 unsigned char ren_kill_flag;
 unsigned long ren_kill_time;
-unsigned char cluster_fragments;     // a sequential file that spans more than one cluster,
-                                     // the fat is updated after the file is written
-                                     // but can't determine the filename until the fat is
-                                     // updated, so the data is written out to temp files and
-                                     // the correct file is updated later
                                                           
 void setup() {
    Serial.begin(38400);
@@ -156,12 +151,12 @@ unsigned char function;
     }      
   }
 
-  // special detect for rename and kill functions. They are somewhat invisible as to what happened
+  // special detect for rename and kill functions. The filename needs to be found.
   if( ren_kill_flag ){
-     if( (millis() - ren_kill_time)  > 1000 ){    // maybe shorten this ?
-        if( ren_kill_flag == 1 ) rename_file();
-        else if( ren_kill_flag == 7 ) delete_file();
-        else if( ren_kill_flag == 4 ) Serial.println(F("Seqential File Open"));  // !! strange one look again
+     if( (millis() - ren_kill_time)  > 1000 ){        // allow time for a disk file write
+        if( ren_kill_flag == 1 ) rename_file();       // whereupon it will not be a rename or kill
+        else if( ren_kill_flag == 7 ) delete_file();  // event
+        else if( ren_kill_flag == 4 ) Serial.println(F("Seqential File Open"));
         else Serial.println(F("Unknown File Event"));
         ren_kill_flag = 0;
      }
@@ -229,7 +224,6 @@ unsigned char c;    // seems to be sent on ram bank change and on boot
 
     wdestination = NONE;
     file.close();
-    fix_fragments();
 }
 
 //void ctrl_break(){   // control break was pressed ?
@@ -336,8 +330,9 @@ void disk_img_write(){
 unsigned char c;
 unsigned long offset;
 char filename[15];
+static char oldfilename[15];
+static unsigned long oldoffset;
 int i;
-int cluster;
 
    offset = 0;
    wcount = read_Aport();
@@ -363,7 +358,6 @@ int cluster;
    if( wtrack == 20 && wsector >= 16 ){
       wdestination = FAT;
       if( ren_kill_flag ) ++ren_kill_flag;    // count fat writes
-      if( wsector == 18 && cluster_fragments ) fix_fragments();
    }
    if( wtrack > 2 && wtrack != 20 ){
       wdestination = FILE;
@@ -374,27 +368,27 @@ int cluster;
       i = find_dir_entry(wdisk,wtrack,wsector,&offset);
       
       if( i == -1 ){            // shouldn't happen unless fat is not up to date
-        //Serial.print(F(" Cluster fragment "));   // this happens when
-                                                   // writing sequential text and
-                                                   // when the file needs more than 1 cluster
-                                                   // the FAT is updated after the data write
-        cluster = wtrack * 2;
-        if( wsector >= 10 ) cluster += 1;
-        offset = 0;
-        strcpy( filename,"cluster_" );     //7
-        i = cluster / 10;    filename[8] = i + '0';  
-        i = cluster % 10;    filename[9] = i + '0';
-        filename[10] = 0;
-        cluster_fragments = 1;                    // flag to clean up when write FAT        
+                                           // this happens when
+                                           // writing sequential text and
+         strcpy(filename,oldfilename);     // when the file needs more than 1 cluster.
+                                           // the FAT is updated after the data write.
+                                           // use the previous filename
+         offset = oldoffset + 9 * 256;     // add one cluster size to the offset
+         if( wsector == 18 || wsector == 9) oldoffset += 9 * 256;  // this may keep the offset correct
+                                           // but it doesn't matter as it is only printed to the screen
+                                           // and the actual file offset is O_AT_END
+                                           // it just must not be zero     
       }
       else{
         make_filename(i,filename);
+        strcpy(oldfilename,filename);
+        oldoffset = offset;
       }
       
       offset += 256UL * (unsigned long)((wsector-1) % 9);
       Serial.write(' ');  Serial.print(filename);
       Serial.write(' ');  Serial.print(offset);
-     // open file here, may need to check if exists and move to backup versions
+     // open file here, !!! need to check if exists and move old to backup versions
       int flags = O_WRONLY;
       if( offset == 0 ) flags |= O_CREAT;
       else flags |= O_AT_END;
@@ -619,66 +613,6 @@ int j,x;
  
 }
 
-void fix_fragments(){
-int i,j;
-unsigned char chain;
-unsigned char fixed;
-char filename[30];
-
-   // need to process the files in the correct order
-   // go through directory for each entry, follow the cluster chain, check for a file
-   // and append the file if found.  set cluster_fragments to zero if fixed any
-    fixed = 0;
-    for( i = 0; i < DIR_SIZE; i += 16 ){
-      
-        chain = my_dir[i + 10];     // the head cluster number in the directory entry
-                     
-        if( chain == 0xff ) continue;
-                                    
-        chain = my_fat[chain];      // the head should not be a fragment, so skip the 1st one          
-        while( chain < 0xc0 ){      // final cluster is 0xc0 + last sector #( 1 to 9 )
-            // make the filename and see if it exists
-            strcpy(filename,"cluster_");
-            j = chain/10;
-            filename[8] = j + '0';
-            j = chain % 10;
-            filename[9] = j + '0';
-            filename[10] = 0;
-            if( sd.exists(filename)) copy_fragment(filename,i) , ++fixed;
-            chain = my_fat[chain];
-        }
-                  
-    }
-    if( fixed ) cluster_fragments = 0;
-}
-
-void copy_fragment( char *fragment, int di ){
-   // get the directory filename and copy fragment to the end of the directory file
-char filename[30];
-SdFile fromfile;
-SdFile tofile;
-unsigned char c;
-int stat;
-
-    make_filename(di,filename);
-    tofile.open(filename,O_WRONLY | O_AT_END);
-    fromfile.open(fragment,O_RDONLY);
-
-    Serial.println();
-    Serial.print(F(" Copy ")); Serial.print(fragment); 
-    Serial.print(F(" to "));   Serial.print(filename);
-    
-    while(1){
-       c = stat = fromfile.read();
-       if( stat == -1 ) break;
-       tofile.write(c);
-    }
-
-    fromfile.close();
-    tofile.close();
-
-    sd.remove(fragment);
-}
 
 int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector, unsigned long *off ){
 int cluster;
@@ -694,6 +628,11 @@ int found;
     // need to follow all the cluster chains until we find the one we want
     found = 0;
     for( i = 0; i < DIR_SIZE; i += 16 ){
+      
+        if( my_dir[i] == 0 || my_dir[i] == 0xff ) continue;   // deleted or unused ever
+                                                             // fix for picking up old deleted file
+                                                             // system writes zero to the name
+                                                             // and leaves the head cluster in place
         *off = 0;
         chain = my_dir[i + 10];     // the head cluster number in the directory entry
         
@@ -738,12 +677,6 @@ int entry,head,sectors;
    while(file.openNext(&root,O_RDONLY)){        // open each file in directory
        file.getName(filename,29);
        file_size = file.fileSize();
-
-       // skip any lost cluster files
-       if( strstr(filename,"cluster_") ){
-        file.close();
-        continue;
-       }
        
        type = 0;                               // text file as default type
        for( i = 0; i < 40; ++i){
@@ -809,7 +742,8 @@ int bump_head( int cluster ){    // find the next free cluster
    return cluster;
 }
 
-
+/**************************************** abandoned code but may want to look at *****************/
+#ifdef NOWAY
 void mk_fake_fs(){
 int i;
    
@@ -866,4 +800,100 @@ int i;
    my_fat[21] = 0xc0 + 3;
      
 }
+
+// fragments is a more correct way to fix the issue of a stale fat when a file write exceeds
+// one cluster, but it is very slow( 6 seconds ) to copy one fragment to the desired file.
+// the current solution of using the previous filename will only fail if one has two sequential
+// files open for write and one exceeds one cluster in size.  I don't think that will
+// happen very often on a computer that has 19k of ram to play with.  And the issue of lost file
+// pieces is avoided when the user interrupts the program
+unsigned char cluster_fragments;     // a sequential file that spans more than one cluster,
+                                     // the fat is updated after the file is written
+                                     // but can't determine the filename until the fat is
+                                     // updated, so the data is written out to temp files and
+                                     // the correct file is updated later
+
+void fix_fragments(){
+int i,j;
+unsigned char chain;
+unsigned char fixed;
+char filename[30];
+
+/***************** this was the detect code in file write when i == -1   */
+    // a new filename is created called cluster_nn where nn is the cluster number
+        cluster = wtrack * 2;
+        if( wsector >= 10 ) cluster += 1;
+        offset = 0;
+        strcpy( filename,"cluster_" );     //7
+        i = cluster / 10;    filename[8] = i + '0';  
+        i = cluster % 10;    filename[9] = i + '0';
+        filename[10] = 0;
+        cluster_fragments = 1;                    // flag to clean up when write FAT
+/****************************    */  
+
+/************ this was in make a fake file system 2  */
+       // skip any lost cluster files
+       if( strstr(filename,"cluster_") ){
+        file.close();
+        continue;
+       }
+       
+
+   // need to process the files in the correct order
+   // go through directory for each entry, follow the cluster chain, check for a file
+   // and append the file if found.  set cluster_fragments to zero if fixed any
+    fixed = 0;
+    for( i = 0; i < DIR_SIZE; i += 16 ){
+      
+        chain = my_dir[i + 10];     // the head cluster number in the directory entry
+                     
+        if( chain == 0xff ) continue;
+                                    
+        chain = my_fat[chain];      // the head should not be a fragment, so skip the 1st one          
+        while( chain < 0xc0 ){      // final cluster is 0xc0 + last sector #( 1 to 9 )
+            // make the filename and see if it exists
+            strcpy(filename,"cluster_");
+            j = chain/10;
+            filename[8] = j + '0';
+            j = chain % 10;
+            filename[9] = j + '0';
+            filename[10] = 0;
+            if( sd.exists(filename)) copy_fragment(filename,i) , ++fixed;
+            chain = my_fat[chain];
+        }
+                  
+    }
+    if( fixed ) cluster_fragments = 0;
+}
+
+void copy_fragment( char *fragment, int di ){
+   // get the directory filename and copy fragment to the end of the directory file
+char filename[30];
+SdFile fromfile;
+SdFile tofile;
+unsigned char c;
+int stat;
+
+    make_filename(di,filename);
+    tofile.open(filename,O_WRONLY | O_AT_END);
+    fromfile.open(fragment,O_RDONLY);
+
+    Serial.println();
+    Serial.print(F(" Copy ")); Serial.print(fragment); 
+    Serial.print(F(" to "));   Serial.print(filename);
+    
+    while(1){
+       c = stat = fromfile.read();
+       if( stat == -1 ) break;
+       tofile.write(c);
+    }
+
+    fromfile.close();
+    tofile.close();
+
+    sd.remove(fragment);
+}
+
+
+#endif
 
