@@ -140,7 +140,7 @@ void setup() {
   // mk_fake_fs();
 
    directory_search();
-   change_directory();
+   change_directory(5);
    
 }
 
@@ -165,19 +165,41 @@ int i = 0;
    root.close(); 
 }
 
-void change_directory(){   // change to each directory in turn, like swapping floppies
-static int next;
+void list_folders(){   // send a list of our dir_names array back to the M200
+int i;                 // format for printing with tabs and carriage returns
+
+   puts_Aport("   ");
+   for( i = 0; i < 10; ++i ){
+      if(dir_names[i][0] == 0 ) break;
+      write_Aport(i+'0'); puts_Aport(" - ");
+      puts_Aport(dir_names[i]);
+      if( i & 1 ) puts_Aport("\r\n   ");
+      else write_Aport('\t');
+   }
+   write_Aport(EOF);
+}
+
+void puts_Aport(char *str){
+char c;
+
+   while( c = *str++ ) write_Aport(c);
+}
+
+void change_directory(char num){   // change to each directory in turn, like swapping floppies
+//static int next;
 char filename[30];
 
+   if( num >= 10 ) num = 0;
    if( dir_names[0][0] == 0 ) error("No directories found");
+   if( dir_names[num][0] == 0 ) num = 0;
    strcpy(filename,"/M200ROOT/");
-   strcat(filename,dir_names[next]);
+   strcat(filename,dir_names[num]);
    strcpy(directory_path,filename);      // not sure how mk_fake_fs is supposed to see the path
    sd.chdir(filename);
 
-   ++next;                     // rotate through the names
-   if( next >= 10 ) next = 0;
-   if( dir_names[next][0] == 0 ) next = 0;
+//   ++next;                     // rotate through the names
+//   if( next >= 10 ) next = 0;
+//   if( dir_names[next][0] == 0 ) next = 0;
 
    mk_fake_fs2();
   
@@ -321,7 +343,8 @@ unsigned char command;
        break;
        case 1:  disk_img_write(); break;
        case 2:  disk_img_read();  break;
-       case 8:  change_directory();
+       case 8:  change_directory(read_Aport()); break;
+       case 9:  list_folders();     break;
    }
 
    Serial.println();
