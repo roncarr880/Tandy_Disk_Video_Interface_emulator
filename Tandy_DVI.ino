@@ -83,7 +83,7 @@ int wbytecount;
 unsigned char ren_kill_flag;
 unsigned long ren_kill_time;
 
-// space to store directory names for simulating changing the floppy in the drive
+// space to store directory names
 char dir_names[10][9];    // arbitrary 10 names at 8 characters long for now
                           // M200 has 6 character filenames, so I think this will be ok
 char directory_path[30];                          
@@ -131,15 +131,10 @@ void setup() {
       sd.initErrorHalt();
    }
 
- //  sd.chdir("M200ROOT/SCRTCH");
    Serial.println();
    Serial.println(F("Starting.."));
 
-   // for now, do this once here.  make a fake filesystem
-  // mk_fake_fs2();
-  // mk_fake_fs();
-
-   directory_search();
+   directory_search();    // dealing with the fake directory here
    change_directory(5);
    
 }
@@ -166,12 +161,13 @@ int i = 0;
 }
 
 void list_folders(){   // send a list of our dir_names array back to the M200
-int i;                 // format for printing with tabs and carriage returns
+int i;                 // formatted for printing with tabs and carriage returns
 
    puts_Aport("   ");
    for( i = 0; i < 10; ++i ){
       if(dir_names[i][0] == 0 ) break;
-      write_Aport(i+'0'); puts_Aport(" - ");
+      if( write_Aport(i+'0') ) return;     // abort on function 4
+      puts_Aport(" - ");
       puts_Aport(dir_names[i]);
       if( i & 1 ) puts_Aport("\r\n   ");
       else write_Aport('\t');
@@ -182,11 +178,11 @@ int i;                 // format for printing with tabs and carriage returns
 void puts_Aport(char *str){
 char c;
 
-   while( c = *str++ ) write_Aport(c);
+   while( c = *str++ ) if( write_Aport(c) ) return;;
 }
 
-void change_directory(char num){   // change to each directory in turn, like swapping floppies
-//static int next;
+void change_directory(char num){   // change default path on SD card
+                                  // this is accessed by adding disk commands 8 and 9
 char filename[30];
 
    if( num >= 10 ) num = 0;
@@ -194,12 +190,8 @@ char filename[30];
    if( dir_names[num][0] == 0 ) num = 0;
    strcpy(filename,"/M200ROOT/");
    strcat(filename,dir_names[num]);
-   strcpy(directory_path,filename);      // not sure how mk_fake_fs is supposed to see the path
+   strcpy(directory_path,filename);   // not sure how to access the default path, so save in a string
    sd.chdir(filename);
-
-//   ++next;                     // rotate through the names
-//   if( next >= 10 ) next = 0;
-//   if( dir_names[next][0] == 0 ) next = 0;
 
    mk_fake_fs2();
   
@@ -216,7 +208,7 @@ unsigned char function;
        case 2:   disk_data();       break;
        case 3:   disk_command();    break;
        case 4:   function4();       break;
-      // case 0xc: ctrl_break();      break;  this doesn't seem to happen
+      // case 0xc: ctrl_break();      break;  this doesn't seem to happen but was in the documentation
        default:  unknown_dispatch(function); break; 
     }      
   }
@@ -234,7 +226,7 @@ unsigned char function;
 
 }
 
-void rename_file(){    // search for a rename event
+void rename_file(){    // search for a rename event by comparing the old and new copies of the directory
 int i;
 char new_name[30];
 char old_name[30];
@@ -253,11 +245,9 @@ char old_name[30];
 }
 
 
-void delete_file(){
-int i;
+void delete_file(){  // a deleted file has its name zero'd in the directory and the head cluster
+int i;               // in place.  Search is for zero'd name in new, and intact file name in old directory
 char filename[30];
-char longpath[80];
-char longpath2[80];
  
   // what file was deleted ?
   filename[0] = '?'; filename[1] = 0;
@@ -266,9 +256,19 @@ char longpath2[80];
       if( my_dir[i] == 0 && my_dir_backup[i] != 0 ) break;
   }
 
-  if( i < DIR_SIZE ){
+  if( i < DIR_SIZE ){             // the file is not deleted but moved to a backup folder( 3 copies ).
       make_filename2(i,filename);
-      // move to the backup folders rather than delete
+      backup(filename);
+  }
+  
+  Serial.print(F("File Deleted")); Serial.write(' '); Serial.println(filename);
+
+}
+
+void backup( char filename[] ){    // keeps 3 copies of files in backup folders on delete
+char longpath[40];
+char longpath2[40];
+
       strcpy(longpath,"/backup3/");
       strcat(longpath,filename);
       if( sd.exists(longpath) ) sd.remove(longpath);
@@ -278,13 +278,8 @@ char longpath2[80];
       strcpy(longpath,"/backup1/");
       strcat(longpath,filename);
       sd.rename(longpath,longpath2);
-      sd.rename(filename,longpath);    // will the default working directory be picked up
-  }
-  
-  Serial.print(F("File Deleted")); Serial.write(' '); Serial.println(filename);
-
+      sd.rename(filename,longpath);      // move instead of delete
 }
-
 
 void function4(){   // what does function 4 do, reset all? or attention?
 unsigned char c;    // seems to be sent on ram bank change and on boot
@@ -296,12 +291,7 @@ unsigned char c;    // seems to be sent on ram bank change and on boot
     file.close();
 }
 
-//void ctrl_break(){   // control break was pressed ?
-//
-//    read_Aport();   // discard
-//}
-
-void disk_data(){
+void disk_data(){    // the actual write of the data to SD or our fake file system
 unsigned char c;
   
     c = read_Aport();
@@ -329,8 +319,9 @@ unsigned char c;
   // Serial.write(c); 
 }
 
-void disk_command(){
-unsigned char command;
+void disk_command(){       // the disk commands have been extended with commands 8 and 9 which
+unsigned char command;     // are unknown to the Tandy disk software, but are used to read the
+                           // directories and to change to a directory via a BASIC program.
 
    command = read_Aport(); 
 
@@ -338,8 +329,7 @@ unsigned char command;
 
    switch(command){
        case 0:              // not sure what this command is, recal?
-         //delay(3);          // delay probably not needed
-         write_Aport(128);   // this response seems to work, hangs on return of many other values
+         write_Aport(128);  // this response seems to work, hangs on return of many other values
        break;
        case 1:  disk_img_write(); break;
        case 2:  disk_img_read();  break;
@@ -375,7 +365,7 @@ static unsigned long last_time;
 unsigned char read_Aport(){        // 82C55 port A handshake mode
 unsigned char c;
 
-  while( digitalRead(OBFA) ){                // wait for data 
+  while( digitalRead(OBFA) ){           // wait for data 
      if( (PINB >> 4) == 4 ) break;      // look for reset on the b port
   }
   digitalWrite(ACKA,LOW);
@@ -390,6 +380,7 @@ unsigned char write_Aport( unsigned char c ){
   while( digitalRead(IBFA) ){              // wait for Tandy M200 to read the old data
      if( (PINB >> 4) == 4 ) return 128;  // break;  // look for reset on the B port.
   }
+  if( (PINB >> 4) == 4 ) return 128;     // abort write even if ready
   PORTA = c;
   DDRA = 0xff;                // outputs 
   digitalWrite(STBA,LOW);
@@ -398,7 +389,7 @@ unsigned char write_Aport( unsigned char c ){
   return 0;
 }
 
-void disk_img_write(){
+void disk_img_write(){    // the destination of the upcoming disk writes is determined.
 unsigned char c;
 unsigned long offset;
 char filename[15];
@@ -444,34 +435,33 @@ int i;
                                            // writing sequential text and
          strcpy(filename,oldfilename);     // when the file needs more than 1 cluster.
                                            // the FAT is updated after the data write.
-                                           // use the previous filename
+                                           // use the previous filename, can't determine via stale FAT
          offset = oldoffset + 9 * 256;     // add one cluster size to the offset
-         if( wsector == 18 || wsector == 9) oldoffset += 9 * 256;  // this may keep the offset correct
-                                           // but it doesn't matter as it is only printed to the screen
-                                           // and the actual file offset is O_AT_END
-                                           // it just must not be zero     
+         if( wsector == 18 || wsector == 9) oldoffset += 9 * 256;      
       }
       else{
         make_filename(i,filename);
         strcpy(oldfilename,filename);
-        oldoffset = offset;
-      }
+        oldoffset = offset;               // the offset is mostly used for the log messages
+      }                                   // except when zero a new file is created
       
       offset += 256UL * (unsigned long)((wsector-1) % 9);
       Serial.write(' ');  Serial.print(filename);
       Serial.write(' ');  Serial.print(offset);
-     // open file here, !!! need to check if exists and move old to backup versions
+     // open file here. on create,  check if exists and move old to backup versions
+      if( offset == 0 && sd.exists(filename) ) backup(filename); 
       int flags = O_WRONLY;
       if( offset == 0 ) flags |= O_CREAT;
-      else flags |= O_AT_END;
-      if( file.open(filename,flags ) == 0 ){   // don't need to seek offset with O_AT_END
+      else flags |= O_AT_END;                 // O_AT_END removes need for a seekSet
+      if( file.open(filename,flags ) == 0 ){
           Serial.print(F(" Open for write failed"));
+          wdestination = NONE;
       }
    }
 }
 
 
-void write_directory( unsigned char c ){   
+void write_directory( unsigned char c ){   // updating the fake directory
 int index;
 
     index = 256*(wsector-1);
@@ -485,12 +475,12 @@ int index;
 }
 
 void backup_directory(){   // make a copy as the filenames are zero'd out on delete
-int i;
+int i;                     // otherwise will not know what file was deleted
 
      for( i = 0; i < DIR_SIZE; ++i ) my_dir_backup[i] = my_dir[i];
 }
 
-void write_fat( unsigned char c ){
+void write_fat( unsigned char c ){   // update the fake FAT, discard writes beyond 80( # of clusters )
 
     if( wbytecount < 80 ) my_fat[wbytecount] = c;
     ++wbytecount;
@@ -499,7 +489,7 @@ void write_fat( unsigned char c ){
 
 }
 
-void write_file( unsigned char c ){
+void write_file( unsigned char c ){   // write to the open file
 
    file.write(c);
    ++wbytecount;
@@ -510,8 +500,8 @@ void write_file( unsigned char c ){
 }
 
 
-void disk_img_read(){
-unsigned long file_offset;
+void disk_img_read(){        // read the disk image, fake directory, fake FAT or open a file.
+unsigned long file_offset;   // and send the data out to the M200
 int stat,x;
 unsigned char c, count, disk, track, sector;
 SdFile file;
@@ -545,9 +535,7 @@ SdFile file;
    // mostly just during boot will we be here,
    // also the system reads T20 S15 which is all zero's for some reason
 
-   // !!! set default directory here or address root with /M200ROOT/ ?
    if(file.open("/M200ROOT/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
-   // or open DSK1.IMG for disk 1
 
    // Simulating a 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39,
    // sectors numbered 1 to 18,  sectors are 256 bytes long, a cluster is 9 sectors.
@@ -561,7 +549,7 @@ SdFile file;
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
           //if( stat == -1 ) error("End of file\n");
-          if( write_Aport(c) ) break;
+          if( write_Aport(c) ) break;    // quit if function4 was sent by M200
       } 
    }
 
@@ -571,6 +559,7 @@ SdFile file;
 
 void read_directory(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector ){
 int x,y;
+
    // size 768, 3 sectors, 16 bytes per entry
    if( sector == 0 || sector > 3 ){
        write_Aport(TS);     // bad sector
@@ -578,7 +567,7 @@ int x,y;
    }
    y = 256 * ( sector - 1 );
    while( count-- ){
-      write_Aport(0);               // add checking if y + 256 is off the end of the array and return error
+      write_Aport(0);       // add checking if y + 256 is off the end of the array and return error?
       for( x = 0; x < 256; ++x ){
         if( write_Aport(my_dir[y++]) ) break; 
       }
@@ -599,8 +588,6 @@ int x;
 void read_file(unsigned char count, unsigned char disk, unsigned char track, unsigned char sector){
 int x,i;
 char filename[15];
-// int head;
-// unsigned char t
 unsigned char c;
 unsigned long offset;
 int stat;
@@ -611,8 +598,8 @@ int stat;
    i = find_dir_entry( disk, track, sector, &offset );
    
    if( i == -1 ){                      // unused disk area was requested
-       while( count-- ){               // send all 0xff's, ignore if count more than 1
-          write_Aport(0);              // actually moves into a used area
+       while( count-- ){               // send all 0xff's, ignore if a count more than 1
+          write_Aport(0);              // actually moves into a used area of the disk
           for( x = 0; x < 256; ++x ) if(write_Aport(0xff)) break;   
        }
        return;
@@ -626,14 +613,14 @@ int stat;
    Serial.write(' '); Serial.print(offset);
    
    if(file.open(filename,O_RDONLY) == 0 ){
-      write_Aport(FF);
+      write_Aport(FF);            // file not found
       return;
    }
    if( file.seekSet(offset) == 0 ) error("\nSeek failed");
 
    /*  read the number of sectors requested, send status before each 256 bytes */
    while( count-- ){
-      write_Aport(0);      // !!! error status sent here, just faking it for now
+      write_Aport(0);      // success status hardcoded
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
           if( stat == -1 ) c = EOF;   // end of file, start filling with EOF
@@ -658,14 +645,14 @@ int j,x;
       if( my_dir[i] != ' ' ) buf[j++] = my_dir[i];
       ++i;
    }
-   // fix up if no extension
+   // remove the . if no extension
    if( buf[j-1] == '.' ) buf[j-1] = 0;
    buf[j] = 0;
  
 }
 
 void make_filename2(int i, char buf[] ){   // look for filenames in the backup directory
-int j,x;
+int j,x;                                   // replicated code from make_filename()
    
    // make a proper filename 6 by 3, filenames are stored with space padding and 3 character
    // extension by its position in the 9 character field
@@ -686,6 +673,7 @@ int j,x;
 }
 
 
+// reverse lookup of a filename from the cluster information, calculated offset into the file.
 int find_dir_entry( unsigned char disk, unsigned char track, unsigned char sector, unsigned long *off ){
 int cluster;
 int i;
@@ -695,16 +683,15 @@ int found;
     cluster = 2 * track;
     if( sector > 9 ) cluster += 1;
 
-    if( my_fat[cluster] > 0xf0 ) return -1;  // unused 
+    if( my_fat[cluster] > 0xf0 ) return -1;  // unused cluster
     
     // need to follow all the cluster chains until we find the one we want
+    // start with the head cluster for each file in the directory
     found = 0;
     for( i = 0; i < DIR_SIZE; i += 16 ){
       
-        if( my_dir[i] == 0 || my_dir[i] == 0xff ) continue;   // deleted or unused ever
-                                                             // fix for picking up old deleted file
-                                                             // system writes zero to the name
-                                                             // and leaves the head cluster in place
+        if( my_dir[i] == 0 || my_dir[i] == 0xff ) continue;   // deleted or unused 
+
         *off = 0;
         chain = my_dir[i + 10];     // the head cluster number in the directory entry
         
@@ -713,11 +700,11 @@ int found;
             found = 1;
             break;
           }
-          chain = my_fat[chain];
+          chain = my_fat[chain];    // follow the clusters
           *off += 9*256;            // add 9 sectors to the file offset
         }
                 
-        if(found) break;  
+        if(found) break;            // found with this directory entry
     }
     if( i < DIR_SIZE ) return i;
     else return -1;
@@ -746,19 +733,19 @@ int entry,head,sectors;
    root.open(directory_path,O_RDONLY);      // open directory
    root.rewind();
    
-   entry = 0; head = 6;                         // dir entry, head cluster
+   entry = 0; head = 6;                         // fake dir entry, starting head cluster of free space
    while(file.openNext(&root,O_RDONLY)){        // open each file in directory
        file.getName(filename,29);
-       file_size = file.fileSize();
-       
+       file_size = file.fileSize();            // reported filesize sometimes more than actual?
+                                               // doesn't seem to cause any problems except used fake space
        type = 0;                               // text file as default type
-       for( i = 0; i < 40; ++i){
+       for( i = 0; i < 40; ++i){               // test for binary data in the file
           j = file.read();
           if( j == -1 ) break;                 // end of file
-          if( j >= 128 ) type = 1;              // binary data in file
+          if( j >= 128 ) type = 1;             // binary data in file, set as a machine code file
        }
 
-       // fill in the directory entry
+       // fill in the directory entry, 6 by 3 filenames
        for( i = 0; i < 9; ++i ) my_dir[entry+i] = ' ';   // pad with spaces
        for( i = 0; i < 6; ++i ){                         // get filename 6 characters max
            if( filename[i] == 0 ) break;
@@ -776,7 +763,8 @@ int entry,head,sectors;
        }
 
        if( type == 1 && my_dir[entry+6] == 'B' ) type = 0x80;   // good chance it is a basic token file
-       my_dir[entry+9] = type;
+       my_dir[entry+9] = type;                                  // .BA or .BAS although those extensions
+                                                                // are not required
 
        my_dir[entry+10] = head;                              // pointer to head cluster
        Serial.print(F("Cluster "));  Serial.print(head);  Serial.write(' ');       
@@ -798,7 +786,7 @@ int entry,head,sectors;
        file.close();
 
        entry += 16;                        // next directory entry
-       if( entry >= DIR_SIZE ) break;      // out of space in directory
+       if( entry >= DIR_SIZE ) break;      // out of space in directory, 3 sectors at this point
    }
    root.close();
   
