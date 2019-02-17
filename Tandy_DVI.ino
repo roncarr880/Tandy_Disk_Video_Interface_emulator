@@ -304,10 +304,11 @@ unsigned char c;
     
 }    
 
-void crt_read(){    // not sure we can support this unless we keep fake video memory
-                    // how many bytes is the M200 expecting?
+void crt_read(){    // this seems to be only for support of LCOPY aka Print Screen command
+
     read_Aport();
-    write_Aport(IE);  // return Internal Error and see what happens
+    write_Aport(0);  // we have no video memory, so terminate the transfer
+    Serial.println(F("CRT Read"));
 }
 
 void crt_write(){   // pass characters to a terminal program
