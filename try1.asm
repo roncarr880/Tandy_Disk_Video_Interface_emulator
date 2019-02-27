@@ -10,9 +10,9 @@
 D200    MVI   A,0C3h
     STA   $EEC2          ;2   JMP D83F
     STA   $EEB6          ;2   JMP D7DD
-    LXI   H,$D7DD +offset
+    LXI   H,D7DD
     SHLD  $EEB7
-    LXI   H,$D83F +offset
+    LXI   H,D83F
     SHLD  $EEC3
     LXI   B,D22E       ; table pointer
     LXI   D,$F507       ; destination + offset
@@ -35,21 +35,21 @@ D21A    LDAX  B            ; get offset
 
 D22E                   ; table
     .db $48
-    .dw $d757 +offset  ; or these could be labels without an offset
+    .dw D757    ;$d757 +offset 
     .db $44
-    .dw $d74d +offset
+    .dw D74D    ;$d74d +offset
     .db $08
     .dw D48E   ;  $d48e +offset
     .db $0c
-    .dw $d790 +offset
+    .dw D790    ;$d790 +offset
     .db $04
-    .dw $d86b +offset
+    .dw D86B    ;$d86b +offset
     .db $0a
-    .dw $d6f1 +offset
+    .dw D6F1    ;$d6f1 +offset
     .db $40
     .dw  D443  ;$d443 +offset
     .db $42
-    .dw $d767 +offset
+    .dw D767    ;$d767 +offset
     .db $10
     .dw D3F0   ;$d3f0 +offset
     .db $0e
@@ -110,18 +110,18 @@ D28C
     SHLD  $EEB4
 
 D2A3    CALL  $9BE1          ; final maxram address
-    LXI   H,$D887 +offset
+    LXI   H,D887             ; FAT pointers stored there
     SHLD  $F738
     LXI   H,0000h
     MVI   A,0FFh
-    SHLD  $E846  +offset      ;0000ff00000000ff0000 in memory, what for?
-    STA   $E848  +offset        ;2
+    SHLD  $E846  +offset      ;FAT stored here for drive 0:
+    STA   $E848  +offset
     SHLD  $E849  +offset
-    SHLD  $E89B  +offset
-    STA   $E89D  +offset        ;2
+    SHLD  $E89B  +offset      ;FAT for drive 1:
+    STA   $E89D  +offset
     SHLD  $E89E  +offset     ; 1554 from old himem
     LXI   H,$504D
-    SHLD  $EEAE       ; 61102 just below old himem
+    SHLD  $EEAE       ; 61102 just below old himem 61104
     JMP   $9AE8
 
 D2CC    PUSH  B
@@ -500,8 +500,762 @@ D572    MOV   A,M
     POP   H
     JMP   D572
 
-D58B
+D58B    LDA   $EF05
+    ANA   A
+    JZ    $D679 +offset
+    LDA   $EF13
+    ANA   A
+    JP    $D679  +offset
+    POP   PSW
+    PUSH  PSW
+    CPI   66h
+    JZ    $D675  +offset
+    CPI   65h
+    JZ    $D674  +offset
+    CPI   52h
+    LXI   H,$D952  +offset
+    JZ    D5E3
+    CPI   53h
+    JZ    D5BF
+    CPI   72h
+    LXI   H,D8B1
+    JZ    D5E3
+    CPI   73h
+    JNZ   $D679  +offset
+D5BF    PUSH  H
+    CALL  $D6A7  +offset
+    MVI   D,6Bh
+    CALL  $D7D4  +offset
+    CALL  D389
+    POP   H
+    MOV   B,A
+    MVI   C,02h
+    MOV   M,A
+    INX   H
+    MOV   D,B
+D5D2    CALL  D389
+    MOV   M,A 
+    INX   H
+    DCR   B
+    JNZ   D5D2
+    MOV   B,D
+    DCR   C
+    JNZ   D5D2
+    JMP   $D666  +offset
+
+D5E3    PUSH  H
+    CALL  D6A7
+    POP   H
+    PUSH  H
+    MOV   A,M
+    ORA   A
+    JZ    D665
+    LHLD  $EF06
+    MVI   B,01h
+    MOV   C,L          ;M
+    CALL  D66B
+    MVI   A,59h
+    CALL  D66D
+    MOV   A,C          ;y
+    ADI   1Fh
+    CALL  D66D
+    MOV   A,B          ;x
+    ADI   1Fh
+    CALL  D66D
+    POP   H
+    MOV   B,M          ;F
+    INX   H
+    PUSH  H
+    MVI   D,00h
+    MOV   E,B          ;X
+    DAD   D
+    XCHG  
+    POP   H
+D612    LDAX  D
+    PUSH  B
+    PUSH  D
+    PUSH  H
+    MOV   C,A          ;O
+    PUSH  B
+    CALL  D66B
+    ANI   02h
+    MVI   A,70h
+    JNZ   D623
+    INR   A
+D623    CALL  D6A7
+    POP   B
+    CALL  D66B
+    ANI   01h
+    MVI   A,65h
+    JZ    D632
+    INR   A
+D632    CALL  D6A7
+    POP   H
+    PUSH  H
+    MOV   A,M
+    CALL  D6A7
+    POP   H
+    POP   D
+    POP   B
+    INX   H
+    INX   D
+    DCR   B
+    JNZ   D612
+    LDA   $EF15
+    ANA   A
+    MVI   C,70h
+    JNZ   D64E
+    INR   C
+D64E    CALL  D66B
+    CALL  D6A7
+    LDA   D8B0
+    ANA   A
+    MVI   C,65h
+    JNZ   D65E
+    INR   C
+D65E    CALL  D66B
+    CALL  D6A7
+    PUSH  H
+D665    POP   H
+    POP   PSW
+    POP   PSW
+    JMP   $1604
+
+D66B    MVI   A,1Bh
+D66D    PUSH  B
+    CALL  D6A7
+    POP   B
+    MOV   A,C          ;y
+    RET 
+
+D674    ORI   0AFh
+    STA   D8B0
+    POP   PSW
+    MOV   C,A          ;O
+    LDA   $EF05
+    ORA   A
+    MOV   A,C          ;y
+    LXI   H,D6A0   ; strange code here
+    JNZ   D6A1     ; jump to 2nd part of lxi
+    MOV   A,M
+    MVI   M,00h          ;6
+    ANA   A
+    MOV   A,C          ;y
+    RZ    
+    PUSH  PSW
+    LDA   $FEB0
+    INR   A
+    JNZ   D69E
+    MVI   C,1Bh
+    CALL  $D73F  +offset
+    MVI   C,51h
+    CALL  $D73F  +offset
+D69E    POP   PSW
+    RET 
 
 
+D6A0    NOP
+D6A1    MVI   M,0FFh
+    LXI   H,$1604
+    XTHL  
+D6A7    CALL  $D727  +offset
+    MOV   C,A
+    MVI   A,01h
+    STA   $F4F5
+    LDA   $EF05
+    ANA   A
+    JZ    D6C1
+    CALL  $5062
+    LHLD  $EF06
+    SHLD  $EF0F
+    RET 
 
+D6C1    LDA   $EF0A
+    PUSH  PSW
+    XRA   A
+    STA   $EF0A          ;2
+    LHLD  $EF06
+    PUSH  H
+    LHLD  $EF0F
+    SHLD  $EF06
+    LHLD  $EF11
+    SHLD  $EF08
+    CALL  $5062
+    LHLD  $EF06
+    SHLD  $EF0F
+    LXI   H,2810h
+    SHLD  $EF08
+    POP   H
+    SHLD  $EF06
+    POP   PSW
+    STA   $EF0A          ;2
+    RET
+
+D6F1    LDA   $EF05
+    ANA   A
+    RZ    
+    POP   H
+    LDA   $EF0A
+    PUSH  PSW
+    XRA   A
+    STA   $EF0A          ;2
+    LHLD  $EF06
+    PUSH  H
+    LHLD  $EF0D
+    SHLD  $EF06
+    LXI   H,2810h
+    SHLD  $EF08
+    CALL  $5062
+    LHLD  $EF06
+    SHLD  $EF0D
+    LHLD  $EF11
+    SHLD  $EF08
+    POP   H
+    SHLD  $EF06
+    POP   PSW
+    STA   $EF0A          ;2
+    RET 
+
+D727    PUSH  H
+    PUSH  D
+    PUSH  B
+    PUSH  PSW
+    MOV   C,A          ;O
+    CALL  D73F
+    LDA   $F222
+    ANA   A
+    JZ    $1604
+    MOV   A,C          ;y
+    CPI   58h
+    CZ    $8FE6
+    JMP   $1604
+
+D73F    XRA   A
+    STA   $FEAF          ;2
+    CALL  $8FD0
+    JNZ   D760
+    MOV   A,C          ;y
+    JMP   D35C
+
+D74D    POP   PSW
+    CALL  $8FD0
+    JNZ   D760
+    JMP   $15EF
+D757    POP   H
+    POP   PSW
+    PUSH  PSW
+    CALL  D6A7
+    JMP   $1604
+
+
+D760    XRA   A
+    CALL  $2922
+    JMP   $15AC
+D767    CALL  $8D11
+    MVI   A,01h
+    STA   $EF05          ;2
+    LHLD  $EF0F
+    PUSH  H
+    SHLD  $EF06
+    CALL  $4F63
+    CALL  $4F6D
+    LHLD  $EF11
+    XCHG  
+    POP   H
+    LDA   $EF12
+    MOV   B,A          ;G
+D785    SUI   0Eh
+    JNC   D785
+    ADI   1Ch
+    CMA
+    INR   A
+    ADD   B
+    RET 
+
+D790    PUSH  H
+    PUSH  D
+    PUSH  PSW
+    LXI   H,0008h
+    DAD   SP          ;9
+    MOV   E,M
+    INX   H
+    MOV   D,M          ;V
+    PUSH  H
+    LXI   H,$5A64
+    RST   3
+    POP   H
+    JNZ   D7AE
+    INX   H
+    MOV   E,M
+    INX   H
+    MOV   D,M          ;V
+    LXI   H,$294A
+    RST   3
+    JZ    D7B2
+D7AE    POP   PSW
+    POP   D
+    POP   H
+    RET
+
+
+D7B2    LDA   $EF05
+    ANA   A
+    JZ    D7AE
+    POP   H
+    POP   H
+    POP   H
+    POP   H
+    POP   H
+    POP   H
+    MVI   D,4Bh
+    CALL  D7D4
+D7C4    CALL  D389
+    ANA   A
+    POP   H
+    RZ    
+    PUSH  H
+    CALL  $84C9
+    JC    D332
+    JMP   D7C4
+
+D7D4    MVI   A,01h
+    STA   $FEAF          ;2
+    MOV   A,D          ;z
+    JMP   D35C
+
+D7DD    DI    
+    CALL  D32C
+D7E1    LXI   B,03E8h
+D7E4    CALL  $8B69
+    JC    D7E1
+    DCX   B
+    MOV   A,B          ;x
+    ORA   C
+    JNZ   D7E4
+    POP   H
+    PUSH  H
+    LXI   D,99F7h
+    RST   3
+    JZ    D81F
+    LDA   $EF05
+    ANA   A
+    RZ    
+    POP   H
+    LXI   D,0018h
+    DAD   D
+    PUSH  H
+    CALL  $99FF
+    LHLD  $FEAA
+    PUSH  H
+    LDA   $F4F6
+    ANA   A
+    JNZ   $99E0
+    CALL  $54A7
+    CALL  $8D11
+    MVI   A,01h
+    STA   $FEB3          ;2
+    POP   H
+    RET
+
+D81F    LDA   $FEB0
+    ANA   A
+    RZ    
+    MVI   C,63h
+    LDA   $EF12
+    CPI   28h
+    JZ    D82F
+    INR   C
+D82F    PUSH  B
+    MVI   C,1Bh
+    CALL  D73F
+    POP   B
+    CALL  D73F
+    MVI   C,00h
+    CALL  D73F
+    RET
+ 
+D83F    PUSH  PSW
+    SHLD  D8A9
+    POP   H
+    SHLD  D8AD
+    XCHG  
+    SHLD  D8AB
+    LXI   H,0000h
+    DAD   SP          ;9
+    LXI   D,$FF80
+    RST   3
+    JC    D85E
+    LXI   D,$FFC0
+    RST   3
+    JNC   D85E
+    POP   H
+D85E    LHLD  D8AB
+    XCHG  
+    LHLD  D8AD
+    PUSH  H
+    LHLD  D8A9
+    POP   PSW
+    RET 
+
+D86B    LXI   H,000Ah
+    DAD   SP          ;9
+    LXI   D,$77D5
+    CALL  D881
+    RNZ   
+    CALL  $4F6D
+    LDA   $EF05
+    ANA   A
+    RZ    
+    JMP   $8D11
+
+D881    MOV   A,M     
+    INX   H           
+    MOV   H,M          ;f
+    MOV   L,A          ;o
+    RST   3
+    RET 
+
+D887    .DW   $E848 +offset   ; Fat addresses again
+D889    .DW   $E89D +offset   ; need to point to the storage area where
+                              ; they are located
+
+D88B    .DB "[DISK-VIDEO code installed]",0dh,0ah,0
+
+D8A9    .DW 0000h
+D8AB    .DW 0000h
+D8AD    .DW 0000h
+
+D8AF    NOP
+D8B0    .DB   0
+D8B1    .DW   0000h
+
+       ;  D8B3 to D9F2 seems to be wasted space 320 bytes
+
+      .ORG   $D9F3 + offset
+
+D9F3    LHLD  $F73D
+    MOV   B,M          ;F
+    INX   H
+    INX   H
+    MOV   A,M
+    ORA   A
+    JZ    $E5FC  +offset
+    INX   H
+    XCHG  
+    MOV   A,B          ;x
+    ADD   A
+    MOV   C,A          ;O
+    MOV   B,A          ;G
+DA04    MVI   H,00h
+    MOV   L,B          ;h
+    DAD   D
+    MOV   A,M
+    INR   A
+    JZ    DA26
+DA0D    MOV   A,C          ;y
+    ORA   A
+    JZ    DA1C
+    DCR   C
+    MVI   H,00h
+    MOV   L,C          ;i
+    DAD   D
+    MOV   A,M
+    INR   A
+    JZ    DA27
+DA1C    MOV   A,B          ;x
+    CPI   4Fh
+    JNC   DA0D
+    INR   B
+    JMP   DA04
+DA26    MOV   C,B          ;H
+DA27    MVI   M,0C0h          ;6
+    XCHG  
+    DCX   H
+    DCR   M          ;5
+    INX   H
+    XCHG  
+    LHLD  $F73F
+    INX   H
+    MOV   A,M
+    ORA   A
+    INR   A
+    MOV   M,C          ;q
+    JZ    DA41
+    DCR   A
+    MOV   M,A          ;w
+    PUSH  B
+    CALL  $DB72  +offset
+    POP   B
+    MOV   M,C          ;q
+DA41    MVI   B,09h
+    JC    $0106
+    LHLD  $F73D
+    DCX   H
+    DCX   H
+    MVI   M,0FFh          ;6
+    INX   H
+    INX   H
+    INX   H
+    MOV   A,M
+    ORA   A
+    JNZ   DA58
+    MVI   A,12h
+    MOV   M,A          ;w
+DA58    SUB   B
+    JC    $E2FC +offset
+    MOV   M,A          ;w
+    RET 
+
+
+DA5E    LHLD  $F73F
+    INX   H
+    MOV   A,M
+    CALL  $DB56  +offset
+    MVI   B,00h
+DA68    MOV   L,A          ;o
+    MVI   H,00h
+    DAD   D
+    MOV   A,M
+    INR   B
+    MVI   M,0FFh          ;6
+    CPI   0C0h
+    JC    DA68
+    DCX   D
+    LDAX  D
+    ADD   B
+    STAX  D
+    DCX   D
+    STAX  D
+    XCHG  
+    DCX   H
+    DCX   H
+    DCX   H
+    MVI   M,0FFh          ;6
+    XCHG  
+    RET
+
+DA83    MVI   E,00h
+    MVI   D,10h
+DA87    CALL  $E379  +offset
+    JNZ   DA8E
+    INR   E
+DA8E    INR   D
+    MOV   A,D          ;z
+    SUI   13h
+    JNZ   DA87
+    ORA   E
+    JZ    $E5F0  +offset
+    MVI   A,03h
+    SUB   E
+    CNZ   $E336  +offset
+    LHLD  $F73D
+    MVI   M,14h          ;6
+    DCX   H
+    DCX   H
+    MVI   M,00h          ;6
+    INX   H
+    INX   H
+    INX   H
+    INX   H
+    PUSH  H
+    INX   H
+    MVI   B,50h
+    XRA   A
+DAB1    MOV   C,M          ;N
+    INX   H
+    INR   C
+    JNZ   DAB8
+    INR   A
+DAB8    DCR   B
+    JNZ   DAB1
+    PUSH  PSW
+    LXI   B,$140F
+    LHLD  $F73A
+    MVI   A,01h
+    ORA   A
+    CALL  $E537  +offset
+    DCR   A
+    JC    DACE
+    MOV   A,M
+DACE    LHLD  $F73D
+    DCX   H
+    ANI   70h
+    MOV   M,A          ;w
+    POP   PSW
+    POP   H
+    MOV   M,A          ;w
+    RET 
+
+
+DAD9    MOV   C,A          ;O
+    CALL  $DC2E  +offset
+    RZ    
+    DCX   H
+    DCX   H
+    MOV   A,M
+    ORA   A
+    JZ    DAEB
+    CALL  $E308  +offset
+    JC    $E5F0  +offset
+DAEB    LHLD  $F73D
+    INX   H
+    MVI   M,00h          ;6
+    DCX   H
+    MVI   M,0FFh          ;6
+    DCX   H
+    MVI   M,00h          ;6
+    DCX   H
+    MVI   M,00h          ;6
+    RET
+
+DAFB    PUSH  H
+    PUSH  D
+    PUSH  B
+    MOV   B,A          ;G
+    LDA   $F73C
+    PUSH  PSW
+    MOV   A,B          ;x
+    ORA   A
+    JM    DB11
+    LDA   $F73C
+    CALL  DB19
+    CNZ   DAD9
+DB11    POP   PSW
+    ORA   A
+    CP    $DC2E  +offset
+    JMP   DB39
+
+DB19    MOV   C,A          ;O
+    LDA   $F735
+    MOV   B,A          ;G
+DB1E    MOV   A,B          ;x
+    CALL  $5B43
+    JZ    DB2C
+    INX   H
+    INX   H
+    INX   H
+    INX   H
+    MOV   A,M
+    CMP   C
+    RZ    
+DB2C    DCR   B
+    JP    DB1E
+    MOV   A,C          ;y
+    RET
+ 
+DB32    PUSH  H
+    PUSH  D
+    PUSH  B
+    ORA   A
+    CP    DA83
+DB39    JMP   $E18D +offset
+
+DB3C    INX   H
+    MOV   A,M
+    INX   H
+    MOV   B,M          ;F
+    CALL  DB56
+    MVI   C,00h
+    JMP   DB51
+
+DB48    MOV   L,A          ;o
+    MVI   H,00h
+    DAD   D
+    MOV   A,M
+    INR   C
+    JZ    $E5F0  +offset
+DB51    CMP   B
+    JNZ   DB48
+    RET 
+
+DB56    LHLD  $F73D
+    INX   H
+    INX   H
+    INX   H
+    XCHG  
+    RET 
+
+DB5E    INX   H
+    INX   H
+    MOV   E,M
+    INX   H
+    MOV   B,M          ;F
+    CALL  DB56
+    MVI   H,00h
+    DAD   D
+    MOV   A,M
+    SUI   0C0h
+    CMC
+    RNC   
+    CMP   B
+    RNZ   
+    STC          ;7
+    RET 
+
+DB72    LHLD  $F73F
+    INX   H
+    MOV   A,M
+    CALL  DB56
+    MVI   C,00h
+DB7C    MOV   L,A          ;o
+    MOV   B,A          ;G
+    MVI   H,00h
+    DAD   D
+    INR   C
+    JZ    $E5F0  +offset
+    MOV   A,M
+    CPI   0C0h
+    JC    DB7C
+    CPI   0CAh
+    JNC   $E5F0  +offset
+    DCR   C
+    SUI   0C0h
+    RET 
+
+DB94    PUSH  B
+    MVI   B,00h
+    MOV   L,C          ;i
+    MOV   H,B
+    DAD   H
+    DAD   H
+    DAD   H
+    DAD   B
+    XCHG  
+    POP   B
+    RET
+
+DBA0    XRA   A
+    STA   $F743          ;2
+    MVI   D,01h
+    CALL  $E3A3  +offset
+    MVI   E,10h
+    MOV   A,M
+    INR   A
+    JZ    DBE9
+    DCR   A
+    JNZ   DBBC
+    SHLD  $F741
+    XCHG  
+    SHLD  $F743
+    XCHG  
+DBBC    LXI   B,$F746
+    PUSH  D
+    PUSH  H
+    MVI   E,09h
+DBC3    LDAX  B
+    CMP   M
+    JNZ   DBD8
+    INX   H
+    INX   B
+    DCR   E
+    JNZ   DBC3
+    POP   D
+    POP   H
+    SHLD  $F743
+    XCHG  
+    SHLD  $F741
+    RET 
+
+dbd8
+dbe9
     .end
