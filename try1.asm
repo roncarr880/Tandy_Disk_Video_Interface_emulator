@@ -329,7 +329,7 @@ D422    PUSH  H
     DAD   SP
     INX   H
     MOV   A,M
-    STA   $EF05 +offset
+    STA   $EF05
 D43C    POP   PSW
     POP   B
     POP   D
@@ -1678,8 +1678,8 @@ DE76    INX   SP          ;3
     MOV   B,A          ;G
     PUSH  B
     LXI   H,$DF42  +offset
-    SHLD  $EF34  +offset
-    LHLD  $EF67  +offset
+    SHLD  $EF34
+    LHLD  $EF67
     PUSH  H
 DE9A    SHLD  $E83F  +offset
     CALL  $E51E  +offset
@@ -2452,12 +2452,12 @@ E34E    PUSH  PSW
 E362    CALL  $3517
     LXI   H,$E727  +offset
     CALL  $3517
-    LDA   $F73C  +offset
+    LDA   $F73C
     ADI   30h
     RST   4
     CALL  $5A8A
     POP   H
-    SHLD  $F73F  +offset
+    SHLD  $F73F
     RET
  
 E379    PUSH  D
@@ -2919,7 +2919,7 @@ E64D    NOP
     XCHG  
     LHLD  $F4FD
     DAD   D
-    SHLD  $E842
+    SHLD  $E842 +offset
     XCHG  
     CALL  E686
     LHLD  $E842  +offset
@@ -3036,108 +3036,5 @@ E76B    .DB "SYSTEM VER ",0
 E777    .DB  01h,0dh,0E1h   ; LXI   B,E10D
 
 E77A    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    JMP   D35C
-    CALL  D389
-    STA   $E7BA          ;2
-    RET 
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    NOP
-    JMP   $D6DE
-    JMP   $D6FE
-    DI    
-    LXI   H,0000
-    DAD   SP          ;9
-    SHLD  $E212
-    LXI   H,0FFFFh
-    SHLD  $E1D8
-    INX   H
-    SHLD  $E1D6
-    SHLD  $E1DA
-    MVI   A,00h
-    STA   $E1DC          ;2
-    STA   $E1DD          ;2
-    STA   $E214          ;2
-    LHLD  $E512
 
     .end
