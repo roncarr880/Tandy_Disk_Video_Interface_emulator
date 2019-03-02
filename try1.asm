@@ -173,7 +173,7 @@ D31B    CALL  D389
     CPI   02h
     STC          ;7
     RNZ   
-    JMP   $E614 +offset
+    JMP   E613+1   ;$E614 +offset
 
 D32C    CALL  $8FE6
     IN    80h
@@ -1336,14 +1336,14 @@ DC51    RC
     MOV   A,M
     RNZ   
     MVI   M,00h          ;6
-    JMP   $E60B  +offset
+    JMP   E60A+1   ;$E60B  +offset
 
 DC60    CALL  DC2E
     CALL  DBA0
     JZ    $E5F9  +offset
     CALL  DC7E
     CALL  DBA0
-    JNZ   $E605  +offset
+    JNZ   E604+1   ;$E605  +offset
     CALL  DC81
     LDA   $F744
     MOV   D,A          ;W
@@ -1392,7 +1392,7 @@ DCA1    MOV   M,E          ;s
     POP   PSW
     MOV   B,A          ;G
     ANI   86h
-    JZ    $E605  +offset
+    JZ    E604+1 ;$E605  +offset
     MOV   A,B          ;x
     STC          ;7
     CALL  $DD64  +offset
@@ -1427,7 +1427,7 @@ DCCC    PUSH  H
     PUSH  H
     CALL  $DD64  +offset
     CALL  $DF51  +offset
-    JC    $E602  +offset
+    JC    E601+1
     CALL  DA5E
     LHLD  $F73F
     INX   H
@@ -1583,7 +1583,7 @@ DDC2    MVI   H,00h
 
 DDEB    MOV   A,D          ;z
     CPI   09h
-    JNC   $E5FF  +offset
+    JNC   E5FE+1    ;$E5FF  +offset
     MVI   E,10h
     PUSH  PSW
     XRA   A
@@ -1652,7 +1652,7 @@ DE52    LHLD  $F73F
     ADD   M
     MOV   M,A          ;w
     CALL  DA43+1    ; call into middle of an instruction
-    POP   H
+DE64    POP   H
     XRA   A
     CALL  $5BF7
     JMP   $052D
@@ -1667,7 +1667,7 @@ DE6C    RST   3
 DE76    INX   SP          ;3
     INX   SP          ;3
     POP   PSW
-    JZ    $E617  +offset
+    JZ    E616+1   ;$E617  +offset
     CALL  $2C1C
     CALL  $5CE1
     XRA   A
@@ -1773,14 +1773,14 @@ DF33    CALL  $2C1C
     MOV   L,A          ;o
     MOV   H,A          ;g
     SHLD  $EF34
-    JMP   $E61A  +offset
+    JMP   E619+1    ;$E61A  +offset
     CALL  $2C1C
     XRA   A
     STA   $F75A          ;2
     MOV   L,A          ;o
     MOV   H,A          ;g
     SHLD  $EF34
-    JMP   $E614  +offset
+    JMP   E613+1    ;$E614  +offset
 
 DF51    LHLD  $F73F
     INX   H
@@ -1931,7 +1931,7 @@ E031    LHLD  $E777  +offset
     XRA   A
     INR   A
     CALL  $E537  +offset
-    JC    $E614  +offset
+    JC    E613+1     ;$E614  +offset
     LDA   $E779  +offset
     MOV   E,A
     MVI   D,00h
@@ -2232,7 +2232,7 @@ E20B    XCHG
     MVI   C,80h
     CALL  E27D
     POP   PSW
-    CALL  DC2E
+E212    CALL  DC2E
     JMP   $34F3
 
 E218    CALL  E288
@@ -2260,7 +2260,7 @@ E218    CALL  E288
     MOV   D,M          ;V
     MOV   A,C          ;y
     CPI   81h
-    JNC   $E617  +offset
+    JNC   E616+1    ;$E617  +offset
     POP   H
     POP   PSW
     PUSH  PSW
@@ -2333,7 +2333,7 @@ E288    CALL  $1158
     INR   L
     CALL  $1158
     CPI   02h
-    JNC   $E617  +offset
+    JNC   E616+1    ;$E617  +offset
     STA   E2B7
     POP   PSW
     POP   B
@@ -2492,7 +2492,7 @@ E3A6    PUSH  D
     MOV   C,D          ;J
     MVI   B,14h
     CALL  $E554  +offset
-    JC    $E614  +offset
+    JC    E613+1    ;$E614  +offset
     POP   H
     POP   D
     RET 
@@ -2715,8 +2715,429 @@ E503    XTHL
     MOV   M,B          ;p
     RET 
 
-e509
-e517
-e51e
-e52b
+
+E509    CALL  E51E
+    MOV   A,M
+    ANI   0F3h
+    MOV   M,A          ;w
+    CALL  E52B
+    INX   H
+    INX   H
+    XRA   A
+    INR   A
+E517    CALL  E554
+    RNC   
+    JMP   E613+1
+
+E51E    LHLD  $F73F
+    INX   H
+    INX   H
+    MOV   B,M          ;F
+    INX   H
+    MOV   C,M          ;N
+    INX   H
+    INX   H
+    INX   H
+    INX   H
+    RET 
+
+E52B    MOV   A,B          ;x
+    ORA   A
+    RAR
+    MOV   B,A          ;G
+    MOV   A,C          ;y
+    JNC   E535
+    ADI   09h
+E535    MOV   C,A          ;O
+    RET 
+
+E537    XCHG  
+    PUSH  PSW
+    LHLD  $F73D
+    INR   M          ;4
+    JZ    E542
+    MOV   M,B          ;p
+    INR   M          ;4
+E542    DCR   M          ;5
+    POP   PSW
+    PUSH  D
+    PUSH  PSW
+    CALL  D2CC
+    JC    E550
+    POP   PSW
+    POP   H
+    ORA   A
+    RET 
+
+E550    POP   PSW
+    POP   H
+    STC          ;7
+    RET 
+
+E554    PUSH  PSW
+    PUSH  H
+    LHLD  $F73D
+    MOV   A,M
+    INR   A
+    JZ    E56C
+    MVI   D,14h
+    MOV   A,D          ;z
+    SUB   B
+    JZ    E56C
+    MOV   E,A
+    MOV   A,D          ;z
+    SUB   M
+    XRA   E
+    CM    E2F5
+E56C    POP   H
+    POP   PSW
+    CALL  E537
+    PUSH  PSW
+    MOV   A,B          ;x
+    CPI   14h
+    JNZ   E580
+    MOV   A,C          ;y
+    CPI   10h
+    PUSH  H
+    CC    E2F5
+    POP   H
+E580    POP   PSW
+    RET 
+
+E582    POP   PSW
+    LDA   $F73C
+    PUSH  PSW
+    CALL  $5B40
+    JZ    E607+1
+    JC    E5FE+1
+    PUSH  H
+    CALL  DB3C
+    CALL  DB94
+    POP   H
+    INX   H
+    INX   H
+    INX   H
+    MOV   L,M          ;n
+E59C    MVI   H,00h
+    DAD   D
+    POP   PSW
+    PUSH  H
+    CALL  DC2E
+    POP   H
+    JMP   $4264
+
+E5A8    POP   PSW
+    LDA   $F73C
+    PUSH  PSW
+    CALL  $5B40
+    JZ    E607+1
+    JC    E5FE+1
+    CALL  DB75
+    PUSH  PSW
+    CALL  DB94
+    POP   PSW
+    MOV   L,A          ;o
+    JMP   E59C
+
+E5C2    JZ    E607+1
+    PUSH  H
+    CALL  DB5E
+    POP   H
+    JNZ   E5D9
+    LXI   D,0005h
+    DAD   D
+    MOV   A,M
+    INX   H
+    SUB   M
+    ORA   A
+    JNZ   E5D9
+    STC          ;7
+E5D9    SBB   A
+    MOV   B,A          ;G
+    POP   PSW
+    CALL  DC2E
+    MOV   A,B          ;x
+    JMP   $415B
+
+E5E3    LXI   B,0006h
+    DAD   B
+    DCR   M          ;5
+    INX   H
+    MOV   A,M
+    ANI   0FDh
+    MOV   M,A          ;w
+    JMP   $5EDA
+
+E5F0    MVI   E,3Bh
+E5F2    LXI   B,$3C1E     ; code calls in here in middle of instructions
+E5F5    LXI   B,$3D1E
+E5F8    LXI   B,$3E1E
+E5FB    LXI   B,$3F1E
+E5FE    LXI   B,$371E
+E601    LXI   B,$351E
+E604    LXI   B,$341E
+E607    LXI   B,$3A1E
+E60A    LXI   B,$321E
+E60D    LXI   B,$361E
+E610    LXI   B,$391E
+E613    LXI   B,$121E
+E616    LXI   B,$051E
+E619    LXI   B,$071E
+    PUSH  D
+    XRA   A
+    STA   $F75A          ;2
+    CALL  $5BF7
+    LDA   $F734
+    DCR   A
+    JM    E637
+    PUSH  PSW
+    MVI   A,00h
+    CALL  DAFB
+    POP   PSW
+    MVI   A,01h
+    CNZ   DAFB
+E637    POP   D
+    XRA   A
+    STA   $E841 +offset          ;2
+    JMP   $0488
+
+E63F    POP   B
+    CPI   09h
+    JNC   E5FE+1
+    PUSH  D
+    CALL  $30B3
+    POP   D
+    LXI   H,E64D
+E64D    NOP
+    MVI   A,0FFh
+    STA   $E841  +offset          ;2
+    INR   A
+    PUSH  H
+    MVI   E,02h
+    CALL  $5BD1
+    LHLD  $F4FB
+    XCHG  
+    LHLD  $F4FD
+    DAD   D
+    SHLD  $E842
+    XCHG  
+    CALL  E686
+    LHLD  $E842  +offset
+    CALL  E686
+    LHLD  $F4FF
+    CALL  E686
+    LHLD  $E842  +offset
+    XCHG  
+    LHLD  $F4FB
+    CALL  DE6C
+    XRA   A
+    STA   $E841  +offset          ;2
+    JMP   DE64
+
+E686    MOV   A,L
+    CALL  $5D10
+    MOV   A,H
+    JMP   $5D10
+
+E68E    POP   B
+    CPI   09h
+    JNC   E5FE+1
+    MVI   A,01h
+    STA   $E841  +offset          ;2
+    PUSH  H
+    XRA   A
+    MVI   E,01h
+    CALL  $5BD1
+    CALL  $5D36
+    MOV   E,A
+    CALL  $5D36
+    MOV   D,A          ;W
+    XCHG  
+    SHLD  $F4FB
+    XCHG  
+    CALL  $5D36
+    MOV   L,A          ;o
+    CALL  $5D36
+    MOV   H,A          ;g
+    PUSH  H
+    CALL  $5D36
+    MOV   L,A          ;o
+    CALL  $5D36
+    MOV   H,A          ;g
+    SHLD  $F4FF
+    MOV   A,H
+    ORA   L
+    POP   H
+    JNZ   E6CE
+    POP   B
+    POP   PSW
+    PUSH  PSW
+    PUSH  B
+    JC    E5FE+1
+E6CE    PUSH  H
+    PUSH  D
+    MOV   A,L
+    SUB   E
+    MOV   L,A          ;o
+    MOV   A,H
+    SBB   D
+    MOV   H,A          ;g
+    SHLD  $F4FD
+    LHLD  $F73F
+    PUSH  H
+    LXI   H,0000h
+    SHLD  $F73F
+    CALL  $3296
+    JC    E619+1
+    POP   H
+    SHLD  $F73F
+    POP   D
+    POP   H
+E6EF    RST   3
+    JZ    E6FE
+    CALL  $5D36
+    JC    E6FE
+    STAX  D
+    INX   D
+    JMP   E6EF
+
+E6FE    XRA   A
+    STA   $E841 +offset          ;2
+    CALL  $5BF7
+    POP   H
+    POP   PSW
+    RNC   
+    PUSH  H
+    LHLD  $F4FF
+    CALL  E711
+    POP   H
+    RET 
+
+E711    PCHL
+
+E712    .DB " copy",0
+E718    .DB "is",0
+E71B    .DB " copies",0
+E723    .DB "are",0
+E727    .DB " bad on drive ",0
+E736    .DB " of allocation ",0
+
+E746    .DB ".25",0
+E74A    .DB ".5",0
+E74D    NOP
+E74E    .DB ".75",0
+
+E752    .DB " K AVAILABLE",0
+   
+E75F    .DB "NO SYSTEM",0dh,0ah,0
+
+E76B    .DB "SYSTEM VER ",0
+
+E777    .DB  01h,0dh,0E1h   ; LXI   B,E10D
+
+E77A    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    JMP   D35C
+    CALL  D389
+    STA   $E7BA          ;2
+    RET 
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    JMP   $D6DE
+    JMP   $D6FE
+    DI    
+    LXI   H,0000
+    DAD   SP          ;9
+    SHLD  $E212
+    LXI   H,0FFFFh
+    SHLD  $E1D8
+    INX   H
+    SHLD  $E1D6
+    SHLD  $E1DA
+    MVI   A,00h
+    STA   $E1DC          ;2
+    STA   $E1DD          ;2
+    STA   $E214          ;2
+    LHLD  $E512
+
     .end
