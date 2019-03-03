@@ -304,11 +304,19 @@ unsigned char c;
     
 }    
 
-void crt_read(){    // this seems to be only for support of LCOPY aka Print Screen command
+void crt_read(){    // this seems to be for support of LCOPY aka Print Screen command
+unsigned char c;    // and something else that currently remains a mystery
 
-    read_Aport();
-    write_Aport(0);  // we have no video memory, so terminate the transfer
-    Serial.println(F("CRT Read"));
+    c = read_Aport();
+    Serial.print(F("CRT Read ")); Serial.println(c,HEX);
+    switch(c){
+       case 'K':   write_Aport(0);   break;    // 4B, LCOPY command
+       case 'k':   write_Aport(1);  puts_Aport("ok");  break;  // 6B, mystery command
+           // M200 reads and saves 2* the returned value, memory set aside is 322 bytes
+           // if we can short circuit this, we can reclaim the otherwise unused 320 bytes
+       default:    write_Aport(0);   break;
+    }
+
 }
 
 void crt_write(){   // pass characters to a terminal program
