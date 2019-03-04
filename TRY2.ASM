@@ -3,7 +3,7 @@
    ; offset as zero should assemble same as original image 
 
 
-   .define offset $100
+   .define offset $670
 
    .org $d200 +offset
  
