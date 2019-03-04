@@ -6,6 +6,7 @@ DVI.DAT  - A floppy disk image file for the M100 or M200 laptops.\
 Tandy_DVI.ino - The main program that emulates the DVI.\
 CPM.BA - Lines in the 200-299 range show how to use the enhanced DVI commands to change directories.\
 try1.asm -  An attempt to relocate the DVI image in M200 memory.  There appears to be about 1700 bytes of wasted space in the as shipped version of the M200 code.   Work in progress, successfully moved the code up 256 bytes.\
-TRY2.ASM - Changed all addressing to symbolic(unless above HIMEM) and relocated up saving 1648 bytes.  Working ok so far.
+TRY2.ASM - Changed all addressing to symbolic(unless above HIMEM) and relocated up saving 1648 bytes.  Working ok so far.\
+Next steps would be to create a new disk image with a new bootloader and TRY2 as the DVI image to load.
 
 Status:  Very usable now.
