@@ -313,7 +313,7 @@ unsigned char c;    // and something else that currently remains a mystery
        case 'K':   write_Aport(0);   break;    // 4B, LCOPY command
        case 'k':   write_Aport(1);  puts_Aport("ok");  break;  // 6B, mystery command
            // M200 reads and saves 2* the returned value, memory set aside is 322 bytes
-           // if we can short circuit this, we can reclaim the otherwise unused 320 bytes
+           // reduced to 32 bytes in the NEW_DVI image
        default:    write_Aport(0);   break;
     }
 
@@ -542,22 +542,35 @@ SdFile file;
 
    // else we read system tracks 0,1,2 or parts of track 20 that are not faked
    // mostly just during boot will we be here,
-   // also the system reads T20 S15 which is all zero's for some reason
+   // also the system reads T20 S15 (which is all zero's) for some reason
 
-   if(file.open("/M200ROOT/DSK0.IMG",O_RDONLY) == 0 ) error("File open failed");
+   // modify this to get the bootloader and the DVI image from files rather than 
+   // from the Tandy supplied image.  The new image saves 1900 bytes of ram,
+   // and does not support the video side of the disk/video interface the same way as the original
+   // but neither does this simulation support the video functions
+   
+   file_offset = 0;
+   if(  track == 1 && sector == 14 ){     //  accessing the 2nd boot loader for the M200
+       if(file.open("/M200ROOT/NEW_BOOT.BIN",O_RDONLY) == 0 ) error("Boot file open failed");
+   }
+   else if(  track == 1 && sector == 15 ){  // accessing the DVI image
+       if(file.open("/M200ROOT/NEW_DVI.BIN",O_RDONLY) == 0 ) error("New DVI image open failed");
+   }
+   else{
+      if(file.open("/M200ROOT/DSK0.IMG",O_RDONLY) == 0 ) error("Disk Image File open failed");
 
    // Simulating a 180k floppy, 40 tracks, 18 sectors per track, tracks numbered 0 to 39,
    // sectors numbered 1 to 18,  sectors are 256 bytes long, a cluster is 9 sectors.
-   file_offset = 256UL * 18UL * (unsigned long)track;
-   file_offset += 256UL * (unsigned long)(sector-1);
-   if( file.seekSet(file_offset) == 0 ) error("Seek failed");
-
+      file_offset = 256UL * 18UL * (unsigned long)track;
+      file_offset += 256UL * (unsigned long)(sector-1);
+      if( file.seekSet(file_offset) == 0 ) error("Seek failed");
+   }
    /*  read the number of sectors requested, send status before each 256 bytes */
    while( count-- ){
-      write_Aport(0);      // error status sent here, just faking it for now
+      write_Aport(0);      // error status sent here, always write success
       for( x = 0; x < 256; ++x ){
           c = stat = file.read();
-          //if( stat == -1 ) error("End of file\n");
+          // if( stat == -1 ) Serial.println("End of file");
           if( write_Aport(c) ) break;    // quit if function4 was sent by M200
       } 
    }
