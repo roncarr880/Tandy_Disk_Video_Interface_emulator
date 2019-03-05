@@ -20,7 +20,7 @@ D11F    CALL  $904E     ; read status, expect 0
     ORA   A
     STC
     RNZ   
-D125    CALL  904E      ; read a sector
+D125    CALL  $904E      ; read a sector
     MOV   M,A
     INX   H
     DCR   B
@@ -31,7 +31,7 @@ D125    CALL  904E      ; read a sector
 
 D135    .DB   02h    ; read disk command
         .DB   15h    ; count 21 sectors 
-        .DB   00h    ; disk 1
+        .DB   00h    ; disk 0
         .DB   01h    ; track 1
         .DB   0Fh    ; start sector 15
 

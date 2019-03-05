@@ -3061,7 +3061,10 @@ E84A     .DS 80
 E89B     .DW 0
 E89D     .DB 0
 E89E     .DW 0
-E8A0     .DS 80
+E8A0     .DS 8    ;.DS 80  fudge the end as getting close to 61104
+        .ORG   $EE7F
+         .DB  0   ;  even out to 15h sectors
+
 
 
     .end
