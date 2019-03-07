@@ -16,6 +16,7 @@
  *   
  *   Have decided to keep a fake FAT and fake Directory for the 180k simulated drive.  The files will
  *   be stored on the SD card as files instead of inserting them in the disk image.
+ *   
  */
 
 #define OBFA 30     // port C handshake names
@@ -86,7 +87,9 @@ unsigned long ren_kill_time;
 // space to store directory names
 char dir_names[10][9];    // arbitrary 10 names at 8 characters long for now
                           // M200 has 6 character filenames, so I think this will be ok
-char directory_path[30];                          
+char directory_path[30];
+
+unsigned char exp_image = 1;   // load the experimental image as default( change with disk command 10 )
                                                           
 void setup() {
    Serial.begin(38400);
@@ -344,6 +347,7 @@ unsigned char command;     // are unknown to the Tandy disk software, but are us
        case 2:  disk_img_read();  break;
        case 8:  change_directory(read_Aport()); break;
        case 9:  list_folders();     break;
+       case 10: exp_image = read_Aport();   break;   // control which DVI image is loaded
    }
 
    Serial.println();
@@ -550,10 +554,10 @@ SdFile file;
    // but neither does this simulation support the video functions
    
    file_offset = 0;
-   if(  track == 1 && sector == 14 ){     //  accessing the 2nd boot loader for the M200
+   if( exp_image && track == 1 && sector == 14 ){     //  accessing the 2nd boot loader for the M200
        if(file.open("/M200ROOT/NEW_BOOT.BIN",O_RDONLY) == 0 ) error("Boot file open failed");
    }
-   else if(  track == 1 && sector == 15 ){  // accessing the DVI image
+   else if( exp_image && track == 1 && sector == 15 ){  // accessing the DVI image
        if(file.open("/M200ROOT/NEW_DVI.BIN",O_RDONLY) == 0 ) error("New DVI image open failed");
    }
    else{
